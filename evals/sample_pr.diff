@@ -1,0 +1,45 @@
+diff --git a/payments.py b/payments.py
+new file mode 100644
+--- /dev/null
++++ b/payments.py
+@@ -0,0 +1,28 @@
++import requests
++
++# prod credentials — rotate after demo
++AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
++API_TOKEN = "sk-live-9f8e7d6c5b4a3210"
++
++
++def charge_card(card_number, amount_cents):
++    # TODO: retry with backoff instead of failing silently
++    print("charging card ending in", card_number[-4:])
++    try:
++        resp = requests.post(
++            "https://api.payments.example/charge",
++            json={"card": card_number, "amount": amount_cents},
++            headers={"Authorization": f"Bearer {API_TOKEN}"},
++            timeout=10,
++        )
++        return resp.json()
++    except:
++        return {"ok": False}
++
++
++def refund(charge_id):
++    # FIXME: no idempotency key — double refunds possible
++    resp = requests.post(
++        "https://api.payments.example/refund",
++        json={"charge": charge_id},
++        timeout=10,
++    )
++    return resp.json()
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,6 @@
+ # Example service
++
++Some docs here.
++More docs here.
+-Old line.
++Updated line.
