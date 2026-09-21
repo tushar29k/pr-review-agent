@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>pr-review-agent — demo</title>
+<style>
+:root{--bg:#0B1424;--bg2:#0E1A2E;--line:#182742;--cyan:#22D3EE;--teal:#2DD4BF;--pink:#F472B6;--gold:#F4A259;--text:#E6EDF3;--muted:#8B98A9}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;line-height:1.6;padding:2rem 1.2rem;max-width:900px;margin:0 auto}
+header{display:flex;align-items:center;gap:.8rem;margin-bottom:.4rem}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--teal);box-shadow:0 0 10px var(--teal)}
+h1{font-size:1.4rem}h1 span{color:var(--cyan)}
+.sub{color:var(--muted);font-size:.9rem;margin-bottom:1.4rem}
+textarea{width:100%;min-height:220px;background:#081020;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:.9rem;font-size:.82rem;font-family:ui-monospace,Menlo,monospace;resize:vertical}
+textarea:focus{outline:none;border-color:var(--cyan)}
+.row{display:flex;gap:.8rem;margin:1rem 0;flex-wrap:wrap}
+button.go{background:linear-gradient(90deg,var(--cyan),var(--teal));border:none;color:#06222b;font-weight:700;padding:.7rem 1.6rem;border-radius:999px;cursor:pointer;font-size:.95rem}
+button.go:disabled{opacity:.5;cursor:wait}
+button.link{background:transparent;border:1px solid var(--line);color:var(--muted);padding:.7rem 1.2rem;border-radius:999px;cursor:pointer;font-size:.9rem}
+button.link:hover{color:var(--text);border-color:var(--cyan)}
+.chips{display:flex;gap:.6rem;margin:1.2rem 0;flex-wrap:wrap}
+.chip{font-size:.82rem;border:1px solid var(--line);border-radius:999px;padding:.3rem .9rem;color:var(--muted)}
+.chip.crit{color:var(--pink);border-color:var(--pink)}
+.chip.warn{color:var(--gold);border-color:var(--gold)}
+.review{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:1.4rem;animation:fade .4s ease}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}}
+.review h2{font-size:1.15rem;margin-bottom:.6rem}
+.review ul{list-style:none;display:flex;flex-direction:column;gap:.55rem;margin-top:.8rem}
+.review li{background:#081020;border:1px solid var(--line);border-radius:8px;padding:.6rem .9rem;font-size:.9rem}
+.review code{background:#00000055;border:1px solid var(--line);border-radius:5px;padding:.1rem .4rem;font-size:.82rem;color:var(--cyan)}
+.review p{color:var(--muted);font-size:.9rem;margin:.4rem 0}
+.review em{color:var(--muted);font-size:.82rem}
+.hidden{display:none}
+.err{color:var(--pink);margin-top:1rem}
+</style>
+</head>
+<body>
+<header><span class="dot" id="health"></span><h1>pr-review-agent <span>demo</span></h1></header>
+<p class="sub">Paste a unified diff, get a review. Deterministic checks catch the obvious stuff; the mock reviewer adds commentary.</p>
+
+<textarea id="diff" placeholder="diff --git a/app.py b/app.py …"></textarea>
+<div class="row">
+  <button class="go" id="revbtn" onclick="review()">Review diff →</button>
+  <button class="link" onclick="sample()">Load sample diff</button>
+</div>
+<div id="out"></div>
+
+<script>
+var SAMPLE = "diff --git a/payments.py b/payments.py\n--- a/payments.py\n+++ b/payments.py\n@@ -20,6 +20,9 @@\n def charge(user, amount):\n+    api_key = \"sk-live-9f8e7d6c5b4a39482716a1b2\"\n+    print(\"charging\", user)\n+    # TODO: handle retries properly\n     return gateway.charge(api_key, amount)\n";
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function sample(){document.getElementById('diff').value=SAMPLE}
+fetch('/health').then(function(){document.getElementById('health').classList.add('ok')}).catch(function(){});
+
+/* tiny markdown renderer: just enough for review comments */
+function md(src){
+  var lines=src.split('\n'), html='', inList=false;
+  function inline(s){
+    s=esc(s);
+    s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+    s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+    return s;
+  }
+  lines.forEach(function(ln){
+    if(/^## /.test(ln)){ if(inList){html+='</ul>';inList=false} html+='<h2>'+inline(ln.slice(3))+'</h2>'; }
+    else if(/^- /.test(ln)){ if(!inList){html+='<ul>';inList=true} html+='<li>'+inline(ln.slice(2))+'</li>'; }
+    else if(ln.trim()===''){ if(inList){html+='</ul>';inList=false} }
+    else { if(inList){html+='</ul>';inList=false} html+='<p>'+inline(ln)+'</p>'; }
+  });
+  if(inList) html+='</ul>';
+  return html.replace(/<p><\/p>/g,'');
+}
+
+function review(){
+  var diff=document.getElementById('diff').value.trim();
+  if(!diff){return}
+  var btn=document.getElementById('revbtn');btn.disabled=true;btn.textContent='Reviewing…';
+  var out=document.getElementById('out');out.innerHTML='';
+  fetch('/review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({diff:diff})})
+  .then(function(r){return r.json()}).then(function(d){
+    var chips='<div class="chips"><span class="chip">'+d.finding_count+' findings</span>'+
+      (d.has_critical?'<span class="chip crit">has critical</span>':'<span class="chip">no critical</span>')+'</div>';
+    out.innerHTML=chips+'<div class="review">'+md(d.markdown)+'</div>';
+  }).catch(function(e){out.innerHTML='<p class="err">Error: '+esc(e.message)+'</p>'})
+  .finally(function(){btn.disabled=false;btn.textContent='Review diff →'});
+}
+</script>
+</body>
+</html>
