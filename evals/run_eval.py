@@ -9,6 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from reviewer.comments import findings_to_markdown  # noqa: E402
+from reviewer.github import parse_pr_url  # noqa: E402
 from reviewer.reviewer import Reviewer  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +30,54 @@ EXPECTATIONS = [
      lambda fs: any(f["check"] == "missing_tests" for f in fs)),
 ]
 
+# clean diff: one comment added to an existing file — nothing to flag
+CLEAN_DIFF = ("diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n"
+              "@@ -1,3 +1,4 @@\n x = 1\n+# just a comment\n y = 2\n")
+
+RANK = {"critical": 0, "warning": 1, "info": 2}
+
+
+def url_parses_ok() -> bool:
+    try:
+        return parse_pr_url("https://github.com/tushar29k/rag-service/pull/42") == (
+            "tushar29k", "rag-service", 42)
+    except ValueError:
+        return False
+
+
+def pulls_variant_ok() -> bool:
+    # some people type /pulls/ instead of /pull/ — be lenient
+    try:
+        return parse_pr_url("https://github.com/o/r/pulls/7") == ("o", "r", 7)
+    except ValueError:
+        return False
+
+
+def rejects_garbage() -> bool:
+    for bad in ["not a url", "https://github.com/owner/repo",
+                "https://github.com/owner/repo/issues/3", ""]:
+        try:
+            parse_pr_url(bad)
+        except ValueError:
+            continue
+        return False
+    return True
+
+
+def findings_have_shape(fs) -> bool:
+    needed = {"severity", "file", "check", "message"}
+    return bool(fs) and all(needed <= set(f) and f["severity"] in RANK for f in fs)
+
+
+def findings_sorted_by_severity(fs) -> bool:
+    ranks = [RANK[f["severity"]] for f in fs]
+    return ranks == sorted(ranks)
+
+
+def clean_diff_stays_clean() -> bool:
+    fs = Reviewer().review(CLEAN_DIFF)
+    return not fs and "No issues found" in findings_to_markdown(fs)
+
 
 def main() -> int:
     with open(os.path.join(HERE, "sample_pr.diff")) as fh:
@@ -39,9 +89,22 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'}  {desc}")
         passed += ok
 
-    print(f"\n{passed}/{len(EXPECTATIONS)} expectations met "
+    extra = [
+        ("parses a canonical PR link", url_parses_ok()),
+        ("tolerates /pulls/ variant", pulls_variant_ok()),
+        ("rejects non-PR links", rejects_garbage()),
+        ("every finding has severity/file/check/message", findings_have_shape(findings)),
+        ("findings sorted critical -> warning -> info", findings_sorted_by_severity(findings)),
+        ("a clean diff stays clean", clean_diff_stays_clean()),
+    ]
+    for desc, ok in extra:
+        print(f"{'PASS' if ok else 'FAIL'}  {desc}")
+        passed += ok
+
+    total = len(EXPECTATIONS) + len(extra)
+    print(f"\n{passed}/{total} expectations met "
           f"({len(findings)} total findings)")
-    return 0 if passed == len(EXPECTATIONS) else 1
+    return 0 if passed == total else 1
 
 
 if __name__ == "__main__":

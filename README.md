@@ -4,8 +4,27 @@ An automated code reviewer for pull requests: deterministic checks catch the non
 
 ## Live demo
 
-**[https://tushar29k-pr-review-agent.onrender.com](https://tushar29k-pr-review-agent.onrender.com)** — Paste a diff and get a rendered review with severity chips — deterministic checks for secrets, debug leftovers, and TODOs.
+**[https://tushar29k-pr-review-agent.onrender.com](https://tushar29k-pr-review-agent.onrender.com)** — paste a GitHub PR link or a raw diff and get a styled review: PR header with author and diff stats, severity-colored finding cards, and one-click markdown copy.
 > Hosted on Render's free tier — the first visit after a while can take ~30s while the instance wakes up.
+
+## Review any GitHub PR
+
+Two ways to review a live PR — no API key needed:
+
+1. **Open the demo** and go to the **GitHub PR** tab. Paste any PR link (`https://github.com/owner/repo/pull/123`) and hit **Review PR** — the service pulls the diff from the GitHub API and reviews it.
+2. **Find your own PRs**: in the same tab, enter your GitHub username and hit **Find PRs**. Your recent public PRs appear as a clickable list — click one and the review starts immediately.
+
+Prefer curl? The endpoint is `POST /review-pr`:
+
+```bash
+curl -X POST localhost:8000/review-pr \
+  -H 'content-type: application/json' \
+  -d '{"pr_url": "https://github.com/owner/repo/pull/123"}'
+# → { markdown, finding_count, has_critical, findings, pr: { title, repo, number,
+#     url, author, author_avatar, additions, deletions, changed_files, state } }
+```
+
+Bad links get a 422 with a plain-language explanation; unreachable or private PRs get a friendly error instead of a stack trace. Unauthenticated GitHub calls are rate-limited (~60/hr per IP), so the errors say so honestly.
 
 ## The idea
 
@@ -50,9 +69,10 @@ pip install -r requirements.txt
 python cli.py --diff evals/sample_pr.diff
 # exit code 1 if anything critical was found — handy as a CI gate
 
-# 2. Run the evals (the sample PR has known issues planted in it)
+# 2. Run the evals (the sample PR has known issues planted in it,
+#    plus URL-parsing and output-shape checks)
 python evals/run_eval.py
-# expect: 5/5 expectations met
+# expect: 11/11 expectations met
 
 # 3. Start the HTTP service
 uvicorn service:app --port 8000
@@ -71,17 +91,18 @@ reviewer/
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   comments.py      render findings as a markdown PR comment
+  github.py        parse PR links + fetch diffs from the GitHub API (stdlib only)
 cli.py             CLI: review a diff file, exit 1 on critical findings
-service.py         FastAPI service: POST /review, GET /health
+service.py         FastAPI service: POST /review, POST /review-pr, GET /health
 evals/
   sample_pr.diff   sample PR with planted issues (secret, print, bare except…)
-  run_eval.py      asserts every planted issue is caught
+  run_eval.py      asserts every planted issue is caught (11/11)
 ROADMAP.md         where this goes next
 ```
 
 ## Evals
 
-`evals/run_eval.py` runs the reviewer over a sample PR with five deliberately planted problems and asserts each one is caught: the AWS key flagged critical, the debug `print`, the bare `except:`, the TODO surfaced, and the new-file-without-tests nudge. 5/5 passing means the pipeline works end to end. Add your own diffs to `evals/` as the check set grows.
+`evals/run_eval.py` runs the reviewer over a sample PR with five deliberately planted problems and asserts each one is caught: the AWS key flagged critical, the debug `print`, the bare `except:`, the TODO surfaced, and the new-file-without-tests nudge. Six more expectations cover the PR-link flow: parsing canonical and `/pulls/` URLs, rejecting non-PR links, finding shape, severity ordering, and a clean diff rendering "No issues found". 11/11 passing means the pipeline works end to end. Add your own diffs to `evals/` as the check set grows.
 
 ## Honest notes
 
