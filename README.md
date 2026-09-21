@@ -2,6 +2,11 @@
 
 An automated code reviewer for pull requests: deterministic checks catch the non-negotiables (leaked secrets, debug leftovers), and a swappable reviewer backend adds judgement on top. Runs as a CLI or an HTTP service. Zero API keys needed to try it.
 
+## Live demo
+
+**[https://tushar29k-pr-review-agent.onrender.com](https://tushar29k-pr-review-agent.onrender.com)** — Paste a diff and get a rendered review with severity chips — deterministic checks for secrets, debug leftovers, and TODOs.
+> Hosted on Render's free tier — the first visit after a while can take ~30s while the instance wakes up.
+
 ## The idea
 
 Every team says "we review every PR", and every team has PRs that get a 👀 and a merge. The boring-but-important stuff — a secret pasted into a config, a `print` left in, a 900-line diff nobody actually read — is exactly what machines are good at catching, every single time, without getting tired.
