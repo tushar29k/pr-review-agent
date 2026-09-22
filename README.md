@@ -106,6 +106,6 @@ ROADMAP.md         where this goes next
 
 ## Honest notes
 
-- The reviewer backend is a **mock** — it fires on a few obvious shapes (bare excepts, big single-file additions) so the pipeline runs offline. The `ReviewBackend` interface is one method; plugging in OpenAI/Anthropic/a local model is the obvious next step (see ROADMAP.md).
+- The reviewer backend is a **mock** by default — it fires on a few obvious shapes (bare excepts, big single-file additions) so the pipeline runs offline. Swap in the real model with `reviewer: openai` (`REVIEWER_BACKEND=openai`, `OPENAI_API_KEY` set, `openai` package installed): each file gets a per-file diff prompt with surrounding context and the JSON findings are validated into the same finding schema. Malformed model output never crashes the review.
 - Secret patterns are a starter set, not exhaustive — real secret scanning (Gitleaks, GitHub secret scanning) should still run in CI.
 - This reviews the *diff*, not the full codebase, so it won't catch architectural issues or cross-file inconsistencies. That's what the LLM backend is for.

@@ -11,10 +11,11 @@ from pydantic import BaseModel
 
 from reviewer.comments import findings_to_markdown
 from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url
-from reviewer.reviewer import Reviewer
+from reviewer.reviewer import Reviewer, make_backend
 
 app = FastAPI(title="pr-review-agent")
-_reviewer = Reviewer()  # one shared instance; backends should be thread-safe
+# REVIEWER_BACKEND=openai on the host enables the model backend; mock otherwise
+_reviewer = Reviewer(make_backend())  # one shared instance; backends should be thread-safe
 
 
 class ReviewRequest(BaseModel):

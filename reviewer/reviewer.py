@@ -7,6 +7,8 @@ even if the model call fails, times out, or just has an off day.
 
 from __future__ import annotations
 
+import os
+
 from . import checks
 from .diff_parser import FileDiff, parse_diff
 
@@ -54,6 +56,17 @@ class MockBackend(ReviewBackend):
 
 
 _SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
+
+
+def make_backend(name: str | None = None) -> ReviewBackend:
+    """Pick a reviewer backend by name. "mock" is the default and needs nothing."""
+    name = (name or os.environ.get("REVIEWER_BACKEND", "mock")).strip().lower()
+    if name == "mock":
+        return MockBackend()
+    if name == "openai":
+        from .openai_backend import OpenAIBackend  # lazy: openai pkg is optional
+        return OpenAIBackend()
+    raise ValueError(f"unknown reviewer backend {name!r} — want 'mock' or 'openai'")
 
 
 class Reviewer:
