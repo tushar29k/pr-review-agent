@@ -66,7 +66,10 @@ def make_backend(name: str | None = None) -> ReviewBackend:
     if name == "openai":
         from .openai_backend import OpenAIBackend  # lazy: openai pkg is optional
         return OpenAIBackend()
-    raise ValueError(f"unknown reviewer backend {name!r} — want 'mock' or 'openai'")
+    if name == "anthropic":
+        from .anthropic_backend import AnthropicBackend  # lazy: anthropic pkg is optional
+        return AnthropicBackend()
+    raise ValueError(f"unknown reviewer backend {name!r} — want 'mock', 'openai', or 'anthropic'")
 
 
 class Reviewer:

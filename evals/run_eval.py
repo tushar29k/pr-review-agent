@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from reviewer.comments import findings_to_markdown  # noqa: E402
 from reviewer.github import parse_pr_url  # noqa: E402
-from reviewer.reviewer import Reviewer  # noqa: E402
+from reviewer.reviewer import Reviewer, make_backend  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -79,15 +79,26 @@ def clean_diff_stays_clean() -> bool:
     return not fs and "No issues found" in findings_to_markdown(fs)
 
 
-def main() -> int:
+def sample_pr_expectations(label: str, reviewer: Reviewer) -> tuple[int, list, int]:
+    """The planted issues must be caught under every reviewer config."""
     with open(os.path.join(HERE, "sample_pr.diff")) as fh:
-        findings = Reviewer().review(fh.read())
-
+        findings = reviewer.review(fh.read())
     passed = 0
     for desc, pred in EXPECTATIONS:
         ok = pred(findings)
-        print(f"{'PASS' if ok else 'FAIL'}  {desc}")
+        print(f"{'PASS' if ok else 'FAIL'}  [{label}] {desc}")
         passed += ok
+    return passed, findings, len(findings)
+
+
+def main() -> int:
+    # keyless anthropic degrades to the mock heuristics, so the same
+    # expectations hold under both configs
+    mock_passed, findings, n_findings = sample_pr_expectations(
+        "reviewer: mock", Reviewer())
+    anth_passed, _, _ = sample_pr_expectations(
+        "reviewer: anthropic", Reviewer(make_backend("anthropic")))
+    passed = mock_passed + anth_passed
 
     extra = [
         ("parses a canonical PR link", url_parses_ok()),
@@ -101,9 +112,9 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'}  {desc}")
         passed += ok
 
-    total = len(EXPECTATIONS) + len(extra)
+    total = 2 * len(EXPECTATIONS) + len(extra)
     print(f"\n{passed}/{total} expectations met "
-          f"({len(findings)} total findings)")
+          f"({n_findings} total findings)")
     return 0 if passed == total else 1
 
 
