@@ -91,6 +91,58 @@ def sample_pr_expectations(label: str, reviewer: Reviewer) -> tuple[int, list, i
     return passed, findings, len(findings)
 
 
+def _with_env(**vars) -> dict:
+    # set env vars for a block, remembering what to restore
+    old = {k: os.environ.get(k) for k in vars}
+    for k, v in vars.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    return old
+
+
+def _restore_env(old: dict) -> None:
+    for k, v in old.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def local_backend_runs_offline() -> bool:
+    # the roadmap item's done-when: `reviewer: local` reviews the sample PR
+    # with zero network (LOCAL_OFFLINE=1, weights served from the HF cache).
+    # _load() must return True — that proves the real model loaded, not the
+    # mock fallback.
+    old = _with_env(LOCAL_OFFLINE="1", LOCAL_MODEL=None)
+    try:
+        backend = make_backend("local")
+        if not backend._load():
+            return False
+        with open(os.path.join(HERE, "sample_pr.diff")) as fh:
+            findings = Reviewer(backend).review(fh.read())
+        return findings_have_shape(findings) and findings_sorted_by_severity(findings)
+    except Exception:
+        return False
+    finally:
+        _restore_env(old)
+
+
+def local_backend_degrades_gracefully() -> bool:
+    # unknown model + offline: no weights to load, so it must fall back to
+    # the mock heuristics instead of raising — same spirit as keyless anthropic
+    old = _with_env(LOCAL_OFFLINE="1", LOCAL_MODEL="no/such-model-here")
+    try:
+        with open(os.path.join(HERE, "sample_pr.diff")) as fh:
+            findings = Reviewer(make_backend("local")).review(fh.read())
+        return findings_have_shape(findings) and findings_sorted_by_severity(findings)
+    except Exception:
+        return False
+    finally:
+        _restore_env(old)
+
+
 def main() -> int:
     # keyless anthropic degrades to the mock heuristics, so the same
     # expectations hold under both configs
@@ -107,6 +159,8 @@ def main() -> int:
         ("every finding has severity/file/check/message", findings_have_shape(findings)),
         ("findings sorted critical -> warning -> info", findings_sorted_by_severity(findings)),
         ("a clean diff stays clean", clean_diff_stays_clean()),
+        ("local backend reviews the sample PR fully offline", local_backend_runs_offline()),
+        ("local backend degrades gracefully without cached weights", local_backend_degrades_gracefully()),
     ]
     for desc, ok in extra:
         print(f"{'PASS' if ok else 'FAIL'}  {desc}")

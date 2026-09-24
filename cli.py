@@ -5,6 +5,7 @@ Usage:
     python cli.py --diff evals/sample_pr.diff
     python cli.py --diff evals/sample_pr.diff --reviewer openai   # needs OPENAI_API_KEY
     python cli.py --diff evals/sample_pr.diff --reviewer anthropic   # needs ANTHROPIC_API_KEY
+    python cli.py --diff evals/sample_pr.diff --reviewer local    # small HF model, offline if cached
 """
 
 import argparse
@@ -19,7 +20,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Review a unified diff.")
     ap.add_argument("--diff", required=True, help="Path to a unified diff file")
     ap.add_argument("--reviewer", default=os.environ.get("REVIEWER_BACKEND"),
-                    help="mock (default), openai, or anthropic")
+                    help="mock (default), openai, anthropic, or local")
     args = ap.parse_args()
 
     try:

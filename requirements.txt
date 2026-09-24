@@ -3,3 +3,5 @@ uvicorn>=0.29
 pydantic>=2.0
 # openai>=1.0  # uncomment for the OpenAI reviewer backend (reviewer: openai)
 # anthropic>=0.40  # uncomment for the Anthropic reviewer backend (reviewer: anthropic)
+# transformers>=4.40  # uncomment for the local-model reviewer backend (reviewer: local)
+# torch               # CPU build is fine: pip install torch --index-url https://download.pytorch.org/whl/cpu
