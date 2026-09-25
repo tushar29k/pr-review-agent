@@ -38,8 +38,10 @@ SOURCE_EXTS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb"
 
 
 def _finding(severity, file, line, check, message):
+    # deterministic checks are certain by design — confidence 1.0, so the
+    # calibration layer never demotes them
     return {"severity": severity, "file": file, "line": line,
-            "check": check, "message": message}
+            "check": check, "confidence": 1.0, "message": message}
 
 
 def check_secrets(f: FileDiff) -> list[dict]:

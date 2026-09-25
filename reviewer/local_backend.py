@@ -17,6 +17,7 @@ import json
 import os
 import sys
 
+from .config import confidence_to_severity
 from .diff_parser import FileDiff
 from .reviewer import MockBackend, ReviewBackend
 
@@ -31,13 +32,18 @@ if _OFFLINE:
     os.environ["HF_HUB_OFFLINE"] = "1"
 
 # same strict schema as the API backends; small models wander, so the
-# parser below also slices prose down to the outermost [ ... ]
+# parser below also slices prose down to the outermost [ ... ].
+# confidence is calibrated on our side (config.py) — the model just reports
+# honestly how sure it is; 0.8+ lands critical, 0.5+ warning, below is info.
 _SYSTEM_PROMPT = (
     "You review code diffs. Reply with ONLY a JSON array of findings, no prose. "
     "Each finding: {\"severity\": \"critical\"|\"warning\"|\"info\", "
-    "\"line\": <new-file line number or null>, \"message\": \"<why it matters>\"}. "
+    "\"line\": <new-file line number or null>, "
+    "\"confidence\": <0.0-1.0, how sure you are this is a real problem>, "
+    "\"message\": \"<why it matters>\"}. "
     "Only flag added lines. critical = exploitable bugs/leaked secrets, "
-    "warning = real defects, info = minor. Empty array if nothing is wrong."
+    "warning = real defects, info = minor. Empty array if nothing is wrong. "
+    "Report confidence honestly — don't inflate it to get attention."
 )
 
 
@@ -61,6 +67,15 @@ def _extract_json(text: str) -> str:
     return text[start:end + 1] if 0 <= start < end else text
 
 
+def _confidence(item: dict) -> float | None:
+    # a real 0-1 number remaps the model's severity through our calibration;
+    # anything else falls back to whatever severity the model gave
+    c = item.get("confidence")
+    if isinstance(c, bool) or not isinstance(c, (int, float)):
+        return None
+    return min(1.0, max(0.0, float(c)))
+
+
 def _parse_findings(text: str, f: FileDiff) -> list[dict]:
     """Validate model JSON into the finding schema. Malformed output -> []."""
     try:
@@ -74,9 +89,11 @@ def _parse_findings(text: str, f: FileDiff) -> list[dict]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        severity = item.get("severity")
         message = item.get("message")
         line = item.get("line")
+        conf = _confidence(item)
+        severity = (confidence_to_severity(conf) if conf is not None
+                    else item.get("severity"))
         if severity not in _SEVERITIES or not message or not isinstance(message, str):
             continue  # drop malformed entries, keep the good ones
         if line is not None and (not isinstance(line, int) or line not in added):
@@ -84,7 +101,7 @@ def _parse_findings(text: str, f: FileDiff) -> list[dict]:
             line = None
         out.append({
             "severity": severity, "file": f.path, "line": line,
-            "check": "llm-local",
+            "check": "llm-local", "confidence": conf,
             "message": message.strip(),
         })
     return out

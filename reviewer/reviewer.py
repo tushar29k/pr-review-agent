@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from . import checks
+from .config import confidence_to_severity
 from .diff_parser import FileDiff, parse_diff
 
 
@@ -25,9 +26,10 @@ class MockBackend(ReviewBackend):
     """Stands in for a real model so the whole pipeline runs with zero keys.
 
     It only fires on obvious shapes (long functions being added, bare
-    excepts) — enough to exercise the pipeline end to end. Swap this for
-    an OpenAI/Anthropic/local-model backend in production; the interface
-    is one method.
+    excepts) — enough to exercise the pipeline end to end. The heuristics
+    carry a fixed confidence through the same calibration every real
+    backend uses, so swapping in OpenAI/Anthropic/local changes the
+    numbers, not the plumbing.
     """
 
     def review_file(self, f: FileDiff) -> list[dict]:
@@ -36,8 +38,9 @@ class MockBackend(ReviewBackend):
             stripped = h.text.strip()
             if stripped == "except:" or stripped == "except Exception:":
                 out.append({
-                    "severity": "warning", "file": f.path, "line": h.new_no,
-                    "check": "llm",
+                    "severity": confidence_to_severity(0.55),
+                    "confidence": 0.55,  # shape is a decent but imperfect signal
+                    "file": f.path, "line": h.new_no, "check": "llm",
                     "message": "Bare except swallows everything including "
                                "KeyboardInterrupt and real bugs. Catch what you expect.",
                 })
@@ -47,8 +50,9 @@ class MockBackend(ReviewBackend):
         # inside a single file is usually doing too much
         if f.added_count > 40 and not f.is_new:
             out.append({
-                "severity": "info", "file": f.path, "line": None,
-                "check": "llm",
+                "severity": confidence_to_severity(0.35),
+                "confidence": 0.35,  # weak heuristic, lands as info by design
+                "file": f.path, "line": None, "check": "llm",
                 "message": f"{f.added_count} added lines in one file — "
                            "worth a skim for accidental complexity.",
             })

@@ -58,6 +58,18 @@ comments.findings_to_markdown()  →  the review comment
 
 Findings carry a severity (`critical` / `warning` / `info`), file, line, and a human-readable message, sorted so the merge-blockers come first.
 
+## Severity calibration
+
+Model backends report a `confidence` (0.0–1.0) per finding; `reviewer/config.py` maps it onto severity with one shared scale so every backend calibrates the same way:
+
+| confidence | severity |
+|---|---|
+| ≥ 0.80 | critical |
+| ≥ 0.50 | warning |
+| < 0.50 | info |
+
+Overrides without touching code: `SEVERITY_CRITICAL` and `SEVERITY_WARNING` env vars (clamped to 0–1, invalid values fall back to the defaults above). Deterministic checks bypass calibration — they're certain by design (`confidence: 1.0`), so a leaked secret is always critical no matter what a model thinks.
+
 ## How to run
 
 Prerequisites: Python 3.10+.
@@ -89,6 +101,7 @@ To review a real PR locally: `git diff main...HEAD > my.diff`, then `python cli.
 reviewer/
   diff_parser.py   parse unified diffs into FileDiff structures
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
+  config.py        severity calibration: confidence → critical/warning/info
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   comments.py      render findings as a markdown PR comment
   github.py        parse PR links + fetch diffs from the GitHub API (stdlib only)
