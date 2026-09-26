@@ -10,7 +10,9 @@ from __future__ import annotations
 import os
 
 from . import checks
+from .checks import TODO_RE
 from .config import confidence_to_severity
+from .dedupe import dedupe_findings
 from .diff_parser import FileDiff, parse_diff
 
 
@@ -46,6 +48,18 @@ class MockBackend(ReviewBackend):
                 })
             if stripped.startswith("def ") and len(h.text) - len(h.text.lstrip()) == 0:
                 pass  # top-level defs are fine; real model would judge complexity
+            # a real model would also judge TODOs left in the diff — flag them
+            # so the dedupe pass has something real to merge with the todos check
+            m = TODO_RE.search(h.text)
+            if m:
+                out.append({
+                    "severity": confidence_to_severity(0.45),
+                    "confidence": 0.45,  # a TODO is a nudge, not a verdict
+                    "file": f.path, "line": h.new_no, "check": "llm",
+                    "message": f"{m.group(1)} left in the diff: "
+                               f"\"{m.group(2).strip()[:80]}\" — "
+                               "track it somewhere or it's tech debt by default.",
+                })
         # one heuristic with actual signal: a function growing 40+ added lines
         # inside a single file is usually doing too much
         if f.added_count > 40 and not f.is_new:
@@ -89,6 +103,7 @@ class Reviewer:
         for f in files:
             if not f.is_binary:
                 findings += self.backend.review_file(f)
+        findings = dedupe_findings(findings)  # one finding per spot, not per layer
         # deterministic order: severity first, then file, then line
         findings.sort(key=lambda d: (
             _SEVERITY_RANK.get(d["severity"], 9), d["file"], d["line"] or 0))
