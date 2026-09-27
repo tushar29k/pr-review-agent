@@ -28,7 +28,7 @@ _TIMEOUT = 20
 _BACKOFF = 1.5
 
 _DEFAULTS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.8-flash",
     "openrouter": "openai/gpt-oss-20b:free",
 }
 

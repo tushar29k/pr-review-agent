@@ -55,7 +55,7 @@ class ClientTest(unittest.TestCase):
             req = u.call_args[0][0]
             url = req.full_url
             self.assertIn("generativelanguage.googleapis.com", url)
-            self.assertIn("gemini-2.0-flash", url)  # default model
+            self.assertIn("gemini-3.8-flash", url)  # default model
             body = json.loads(req.data.decode())
             self.assertEqual(body["contents"][0]["parts"][0]["text"], "hello")
 
