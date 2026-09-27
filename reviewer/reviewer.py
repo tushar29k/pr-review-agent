@@ -79,8 +79,11 @@ _SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
 def make_backend(name: str | None = None) -> ReviewBackend:
-    """Pick a reviewer backend by name. "mock" is the default and needs nothing."""
-    name = (name or os.environ.get("REVIEWER_BACKEND", "mock")).strip().lower()
+    """Pick a reviewer backend by name. "mock" is the default and needs
+    nothing; "free" is the free-tier API backend (needs LLM_API_KEY) and is
+    auto-selected when a key is set but REVIEWER_BACKEND isn't."""
+    raw = (name or os.environ.get("REVIEWER_BACKEND") or "").strip().lower()
+    name = raw or ("free" if os.environ.get("LLM_API_KEY") else "mock")
     if name == "mock":
         return MockBackend()
     if name == "openai":
@@ -92,7 +95,10 @@ def make_backend(name: str | None = None) -> ReviewBackend:
     if name == "local":
         from .local_backend import LocalBackend  # lazy: weights load on first use
         return LocalBackend()
-    raise ValueError(f"unknown reviewer backend {name!r} — want 'mock', 'openai', 'anthropic', or 'local'")
+    if name == "free":
+        from .free_backend import FreeBackend  # lazy: needs LLM_API_KEY
+        return FreeBackend()
+    raise ValueError(f"unknown reviewer backend {name!r} — want 'mock', 'openai', 'anthropic', 'local', or 'free'")
 
 
 class Reviewer:
