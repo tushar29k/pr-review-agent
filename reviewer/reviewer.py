@@ -8,10 +8,12 @@ even if the model call fails, times out, or just has an off day.
 from __future__ import annotations
 
 import os
+import time
 
 from . import checks
 from .checks import TODO_RE
 from .config import confidence_to_severity
+from .cost import append_record, build_record
 from .dedupe import dedupe_findings
 from .diff_parser import FileDiff, parse_diff
 
@@ -98,13 +100,43 @@ class Reviewer:
         self.backend = backend or MockBackend()
 
     def review(self, diff_text: str) -> list[dict]:
+        findings, _ = self.review_timed(diff_text)
+        return findings
+
+    def review_timed(self, diff_text: str) -> tuple[list[dict], dict[str, float]]:
+        """Same review, plus wall-clock ms per stage (parse/checks/model/dedupe)."""
+        t = time.perf_counter()
         files = parse_diff(diff_text)
+        stages = {"parse_ms": (time.perf_counter() - t) * 1000}
+
+        t = time.perf_counter()
         findings = checks.run_all(files)
+        stages["checks_ms"] = (time.perf_counter() - t) * 1000
+
+        t = time.perf_counter()
         for f in files:
             if not f.is_binary:
                 findings += self.backend.review_file(f)
+        stages["model_ms"] = (time.perf_counter() - t) * 1000
+
+        t = time.perf_counter()
         findings = dedupe_findings(findings)  # one finding per spot, not per layer
+        stages["dedupe_ms"] = (time.perf_counter() - t) * 1000
         # deterministic order: severity first, then file, then line
         findings.sort(key=lambda d: (
             _SEVERITY_RANK.get(d["severity"], 9), d["file"], d["line"] or 0))
+        stages["total_ms"] = sum(stages.values())  # parse+checks+model+dedupe
+        return findings, stages
+
+    def backend_name(self) -> str:
+        # "MockBackend" -> "mock" — matches the price table keys in cost.py
+        return type(self.backend).__name__.replace("Backend", "").lower()
+
+    def review_and_log(self, diff_text: str, log_path: str | None = None,
+                       backend: str | None = None) -> list[dict]:
+        """Review, and append one JSONL record when a log path is given."""
+        findings, stages = self.review_timed(diff_text)
+        if log_path:
+            append_record(log_path, build_record(
+                diff_text, findings, stages, backend or self.backend_name()))
         return findings

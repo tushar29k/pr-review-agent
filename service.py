@@ -9,6 +9,8 @@ Try:   curl -X POST localhost:8000/review \
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import os
+
 from reviewer.comments import findings_to_markdown
 from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url
 from reviewer.reviewer import Reviewer, make_backend
@@ -16,6 +18,8 @@ from reviewer.reviewer import Reviewer, make_backend
 app = FastAPI(title="pr-review-agent")
 # REVIEWER_BACKEND=openai on the host enables the model backend; mock otherwise
 _reviewer = Reviewer(make_backend())  # one shared instance; backends should be thread-safe
+# REVIEW_LOG_PATH set on the host turns on per-review cost/latency JSONL logging
+_log_path = os.environ.get("REVIEW_LOG_PATH")
 
 
 class ReviewRequest(BaseModel):
@@ -52,7 +56,7 @@ class PRReviewResponse(ReviewResponse):
 
 @app.post("/review", response_model=ReviewResponse)
 def review(req: ReviewRequest) -> ReviewResponse:
-    findings = _reviewer.review(req.diff)
+    findings = _reviewer.review_and_log(req.diff, log_path=_log_path)
     return ReviewResponse(
         markdown=findings_to_markdown(findings),
         finding_count=len(findings),
@@ -86,7 +90,7 @@ def review_pr(req: PRReviewRequest) -> PRReviewResponse:
         status = 404 if "not found" in str(exc).lower() else 502
         raise HTTPException(status_code=status, detail=str(exc)) from exc
 
-    findings = _reviewer.review(diff_text)
+    findings = _reviewer.review_and_log(diff_text, log_path=_log_path)
     return PRReviewResponse(
         markdown=findings_to_markdown(findings),
         finding_count=len(findings),

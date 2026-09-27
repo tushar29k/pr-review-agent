@@ -6,6 +6,7 @@ Usage:
     python cli.py --diff evals/sample_pr.diff --reviewer openai   # needs OPENAI_API_KEY
     python cli.py --diff evals/sample_pr.diff --reviewer anthropic   # needs ANTHROPIC_API_KEY
     python cli.py --diff evals/sample_pr.diff --reviewer local    # small HF model, offline if cached
+    python cli.py --diff evals/sample_pr.diff --log reviews.jsonl # + cost/latency JSONL record
 """
 
 import argparse
@@ -21,6 +22,8 @@ def main() -> int:
     ap.add_argument("--diff", required=True, help="Path to a unified diff file")
     ap.add_argument("--reviewer", default=os.environ.get("REVIEWER_BACKEND"),
                     help="mock (default), openai, anthropic, or local")
+    ap.add_argument("--log", default=os.environ.get("REVIEW_LOG_PATH"),
+                    help="append a per-review cost/latency record to this JSONL file")
     args = ap.parse_args()
 
     try:
@@ -36,7 +39,8 @@ def main() -> int:
         print(f"reviewer backend error: {exc}", file=sys.stderr)
         return 2
 
-    findings = Reviewer(backend).review(diff_text)
+    findings = Reviewer(backend).review_and_log(
+        diff_text, log_path=args.log, backend=args.reviewer)
     print(findings_to_markdown(findings))
     # exit 1 if anything critical turned up — handy for CI gates
     return 1 if any(f["severity"] == "critical" for f in findings) else 0

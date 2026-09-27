@@ -103,19 +103,41 @@ reviewer/
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
   config.py        severity calibration: confidence → critical/warning/info
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
+  cost.py          per-review cost/latency logging to JSONL (token + price table)
   comments.py      render findings as a markdown PR comment
   github.py        parse PR links + fetch diffs from the GitHub API (stdlib only)
 cli.py             CLI: review a diff file, exit 1 on critical findings
 service.py         FastAPI service: POST /review, POST /review-pr, GET /health
 evals/
   sample_pr.diff   sample PR with planted issues (secret, print, bare except…)
-  run_eval.py      asserts every planted issue is caught (11/11)
+  run_eval.py      asserts every planted issue is caught (18/18)
+  cost_table.py    print a cost/latency table from a review-log JSONL file
+  sample_reviews.jsonl  10 real mock-backend review runs feeding cost_table.py
 ROADMAP.md         where this goes next
 ```
 
 ## Evals
 
 `evals/run_eval.py` runs the reviewer over a sample PR with five deliberately planted problems and asserts each one is caught: the AWS key flagged critical, the debug `print`, the bare `except:`, the TODO surfaced, and the new-file-without-tests nudge. The planted-issue checks run twice — once under `reviewer: mock` and once under `reviewer: anthropic` (keyless Anthropic degrades to the mock heuristics, so the same expectations hold). Six more expectations cover the PR-link flow: parsing canonical and `/pulls/` URLs, rejecting non-PR links, finding shape, severity ordering, and a clean diff rendering "No issues found". Two more cover the local-model backend: `reviewer: local` reviews the sample PR fully offline (real weights, zero network) and degrades gracefully to the mock heuristics when no weights are cached. 18/18 passing means the pipeline works end to end. Add your own diffs to `evals/` as the check set grows.
+
+## Cost & latency logging
+
+Every review can append one JSONL record — timestamp, backend, diff size,
+finding counts by severity, wall-clock ms per stage (parse / checks / model /
+dedupe), estimated tokens, and estimated cost:
+
+```bash
+python cli.py --diff evals/sample_pr.diff --log reviews.jsonl
+python evals/cost_table.py reviews.jsonl   # the cost table
+# 10 real mock runs are already logged: python evals/cost_table.py evals/sample_reviews.jsonl
+```
+
+Token counts are estimates (chars/4), not tokenizer output — the cost column
+is order-of-magnitude. Prices default to small-model list prices per backend
+(`reviewer/cost.py`), with `REVIEW_PRICE_<BACKEND>_INPUT_PER_1M`,
+`REVIEW_PRICE_<BACKEND>_OUTPUT_PER_1M`, and `REVIEW_PRICE_<BACKEND>_FLAT`
+env overrides; `mock` is $0 by definition, `local` charges a flat per-review
+GPU-time guess. The HTTP service logs too when `REVIEW_LOG_PATH` is set.
 
 ## Honest notes
 
