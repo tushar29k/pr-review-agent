@@ -45,6 +45,12 @@ header{display:flex; align-items:flex-start; gap:.9rem; margin-bottom:.3rem; pos
 h1{font-size:1.5rem;font-weight:700;letter-spacing:.5px}
 h1 span{font-family:var(--mono);font-weight:400;font-size:1rem;color:var(--ink-dim)}
 .sub{color:var(--ink-dim);font-size:.9rem;margin:.6rem 0 1.4rem;max-width:60ch;position:relative;z-index:1}
+/* llm stamp: green when a real model reviews, amber on the offline mock */
+.stamp{font-family:var(--mono);font-size:.68rem;letter-spacing:2px;text-transform:uppercase;
+  color:var(--ink-dim);border:1px solid var(--line);border-radius:4px;padding:.3rem .8rem;
+  margin-left:auto;align-self:center;position:relative;z-index:1}
+.stamp.live{color:var(--green);border-color:var(--green)}
+.stamp.mock{color:var(--amber);border-color:var(--amber)}
 
 /* ---------- sheet tabs ---------- */
 .tabs{display:flex;gap:.5rem;margin-bottom:1.6rem;border-bottom:1px solid var(--line);position:relative;z-index:1}
@@ -180,6 +186,7 @@ button.link:hover{color:var(--ink);border-color:var(--ink);border-style:solid}
     <p class="kicker">engineering review desk · dwg no. pra-001 · rev a</p>
     <h1>pr-review-agent <span>/ demo</span></h1>
   </div>
+  <span class="stamp" id="llmbadge">…</span>
 </header>
 <p class="sub">Review any GitHub PR from its link — or paste a unified diff. Deterministic checks catch the obvious stuff; the mock reviewer adds commentary.</p>
 
@@ -225,6 +232,12 @@ var SAMPLE = "diff --git a/payments.py b/payments.py\n--- a/payments.py\n+++ b/p
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function sample(){document.getElementById('diff').value=SAMPLE}
 fetch('/health').then(function(){document.getElementById('health').classList.add('ok')}).catch(function(){});
+// llm stamp: green when a real model reviews, amber on the offline mock
+fetch('/info').then(function(r){return r.json()}).then(function(i){
+  var el=document.getElementById('llmbadge');
+  if(i.real_llm){el.textContent='● live LLM · '+i.model;el.classList.add('live')}
+  else{el.textContent='● offline mock';el.classList.add('mock')}
+}).catch(function(){document.getElementById('llmbadge').textContent='● status unknown'});
 
 function showTab(which){
   var tabs=document.querySelectorAll('.tab'), panels=document.querySelectorAll('.tabpanel');

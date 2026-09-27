@@ -95,6 +95,27 @@ curl -X POST localhost:8000/review \
 
 To review a real PR locally: `git diff main...HEAD > my.diff`, then `python cli.py --diff my.diff`.
 
+### Use your own key
+
+The live demo above runs on the author's key. To point your own copy at a
+real model for the review judgement:
+
+1. **Get a free key.** Go to `aistudio.google.com/api-keys` and click
+   **Create API key** — pick "Create API key in new project" (no Cloud
+   project and no credit card needed). Alternative: an OpenRouter key
+   (`openrouter.ai`) used with a `:free` model slug.
+2. **Local run:** `export LLM_API_KEY=your-key-here` before starting the
+   server — or put it in a `.env` file you never commit.
+3. **Render deploy:** dashboard → your service → Environment → add
+   `LLM_API_KEY` → Save. Render redeploys automatically and the fresh
+   build reads the key at startup (the backend is chosen once at import,
+   so a restart is required — there is no hot-swap).
+4. **Confirm it's live:** the stamp in the demo header turns green
+   (`● live LLM · gemini-3.8-flash`), or `GET /info` returns
+   `"real_llm": true`.
+5. **Keep the key safe:** keys live in environment variables or a secret
+   manager only — never in code, never in a commit.
+
 ## Project layout
 
 ```

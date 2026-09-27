@@ -70,6 +70,18 @@ def health() -> dict:
     return {"ok": True}
 
 
+@app.get("/info")
+def info() -> dict:
+    # honest backend report for the demo badge: real model or offline mock
+    backend = _reviewer.backend
+    client = getattr(backend, "_client", None)
+    real = type(backend).__name__ == "FreeBackend" and client is not None
+    return {"real_llm": real,
+            "provider": client.provider if real else None,
+            "model": client.model if real else None,
+            "backend": type(backend).__name__}
+
+
 @app.post("/review-pr", response_model=PRReviewResponse)
 def review_pr(req: PRReviewRequest) -> PRReviewResponse:
     """Review a live GitHub PR straight from its link.
