@@ -235,7 +235,8 @@ fetch('/health').then(function(){document.getElementById('health').classList.add
 // llm stamp: green when a real model reviews, amber on the offline mock
 fetch('/info').then(function(r){return r.json()}).then(function(i){
   var el=document.getElementById('llmbadge');
-  if(i.real_llm){el.textContent='● live LLM · '+i.model;el.classList.add('live')}
+  if(i.real_llm && !i.last_error){el.textContent='● live LLM · '+i.model;el.classList.add('live')}
+  else if(i.real_llm){el.textContent='● live LLM · '+i.model+' · api hiccup';el.classList.add('mock')}
   else{el.textContent='● offline mock';el.classList.add('mock')}
 }).catch(function(){document.getElementById('llmbadge').textContent='● status unknown'});
 

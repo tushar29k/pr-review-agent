@@ -21,6 +21,7 @@ def main():
         assert key in body, f"/info missing {key!r}: {body}"
     assert body["real_llm"] is False, f"no key set, want mock: {body}"
     assert body["provider"] is None and body["model"] is None, body
+    assert body["last_error"] is None, body  # nothing failed yet
     print("info ok: mock mode reported honestly")
 
 

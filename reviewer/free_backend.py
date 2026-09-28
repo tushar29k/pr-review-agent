@@ -116,13 +116,16 @@ class FreeBackend(ReviewBackend):
         if model:
             client.model = model
         self._client = client
+        self.last_error = None  # last api failure, if any — on /info
 
     def review_file(self, f: FileDiff) -> list[dict]:
         try:
             text = self._client.generate(
                 _SYSTEM_PROMPT + "\n\n" + _file_prompt(f),
                 max_tokens=512, temperature=0)  # reviews shouldn't be creative
+            self.last_error = None  # recovered
         except FreeLLMError as exc:  # network/auth hiccups skip the file
+            self.last_error = str(exc)  # key-free — safe for /info
             print(f"free backend: model call failed ({exc}), skipping file",
                   file=sys.stderr)
             return []

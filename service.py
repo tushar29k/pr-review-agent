@@ -79,6 +79,7 @@ def info() -> dict:
     return {"real_llm": real,
             "provider": client.provider if real else None,
             "model": client.model if real else None,
+            "last_error": getattr(backend, "last_error", None),
             "backend": type(backend).__name__}
 
 
