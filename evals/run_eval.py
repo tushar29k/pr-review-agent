@@ -6,6 +6,7 @@ Run:  python evals/run_eval.py
 
 import os
 import sys
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -143,6 +144,113 @@ def local_backend_degrades_gracefully() -> bool:
         _restore_env(old)
 
 
+def load_samples() -> tuple[list, str]:
+    # 5 sample PRs with planted issues + ground truth, from sample_prs.json
+    with open(os.path.join(HERE, "sample_prs.json")) as fh:
+        data = json.load(fh)
+    return data["samples"], data.get("matching_rule", "")
+
+
+def _check_matches_finding(gt: dict, finding: dict) -> bool:
+    # same file, same check, same line region. a planted "llm" issue matches
+    # any model-layer check (llm, llm-openai, llm-anthropic, llm-local)
+    # because each backend names its own judgement layer differently.
+    if gt["file"] != finding.get("file"):
+        return False
+    if gt["check"] == "llm":
+        fc = finding.get("check", "")
+        if not (fc == "llm" or fc.startswith("llm-")):
+            return False
+    elif gt["check"] != finding.get("check"):
+        return False
+    gl, fl = gt["line"], finding.get("line")
+    if gl is None or fl is None:
+        return gl is None and fl is None  # file-level notes match only each other
+    return abs(gl - fl) <= 1  # line numbers drift by a line or two across edits
+
+
+def score_findings(expected: list, findings: list) -> tuple[int, int, int]:
+    # (true positives, false positives, false negatives) — each planted
+    # issue consumes at most one finding, so dupes count as noise
+    used = set()
+    tp = 0
+    for gt in expected:
+        hit = next((i for i, f in enumerate(findings)
+                    if i not in used and _check_matches_finding(gt, f)), None)
+        if hit is not None:
+            used.add(hit)
+            tp += 1
+    fp = len(findings) - len(used)
+    return tp, fp, len(expected) - tp
+
+
+def _fmt(score: float) -> str:
+    return f"{score:.2f}"
+
+
+def offline_backends() -> list[tuple[str, "Reviewer"]]:
+    """Every backend that can run here, keyed or not.
+
+    openai/free need real API keys — they sit this out offline and say so.
+    anthropic without a key falls back to the mock heuristics (same as the
+    plain mock run, but it exercises the backend plumbing end to end).
+    local loads cached weights offline, else degrades to the mock fallback.
+    """
+    out = [("mock", Reviewer())]
+    out.append(("anthropic (mock fallback, no key)", Reviewer(make_backend("anthropic"))))
+    old = _with_env(LOCAL_OFFLINE="1", LOCAL_MODEL=None)
+    try:
+        from reviewer.local_backend import LocalBackend  # noqa: E402
+        local = LocalBackend()
+        try:
+            real = bool(local._load())  # True = real weights, no mock anywhere
+        except Exception:
+            real = False
+        label = "local (real weights)" if real else "local (mock fallback)"
+        out.append((label, Reviewer(local)))
+    finally:
+        _restore_env(old)
+    for name, env_key in (("openai", "OPENAI_API_KEY"), ("free", "LLM_API_KEY")):
+        if os.environ.get(env_key):
+            out.append((name, Reviewer(make_backend(name))))
+        else:
+            print(f"  (skipping backend '{name}': no {env_key} in this environment)")
+    return out
+
+
+def per_backend_scores() -> bool:
+    """Run all 5 sample PRs through every offline-capable backend and print
+    a precision/recall table per backend."""
+    samples, rule = load_samples()
+    backends = offline_backends()
+    print(f"\nmatching rule: {rule}")
+    print(f"\n{'backend':36s} {'sample':5s} {'tp':>3s} {'fp':>3s} {'fn':>3s} "
+          f"{'precision':>9s} {'recall':>7s}")
+    totals: dict[str, list[int]] = {}
+    for label, reviewer in backends:
+        acc = [0, 0, 0]
+        for s in samples:
+            with open(os.path.join(HERE, s["diff"])) as fh:
+                findings = reviewer.review(fh.read())
+            tp, fp, fn = score_findings(s["expected"], findings)
+            acc[0] += tp
+            acc[1] += fp
+            acc[2] += fn
+            p = tp / (tp + fp) if tp + fp else 1.0
+            r = tp / (tp + fn) if tp + fn else 1.0
+            print(f"{label:36s} {s['id']:5s} {tp:>3d} {fp:>3d} {fn:>3d} "
+                  f"{_fmt(p):>9s} {_fmt(r):>7s}")
+        totals[label] = acc
+    print()
+    for label, (tp, fp, fn) in totals.items():
+        p = tp / (tp + fp) if tp + fp else 1.0
+        r = tp / (tp + fn) if tp + fn else 1.0
+        print(f"{'TOTAL ' + label:36s} {tp:>3d} {fp:>3d} {fn:>3d} "
+              f"{_fmt(p):>9s} {_fmt(r):>7s}")
+    # the table is the deliverable; informational only, never gates the run
+    return True
+
+
 def main() -> int:
     # keyless anthropic degrades to the mock heuristics, so the same
     # expectations hold under both configs
@@ -169,7 +277,11 @@ def main() -> int:
     total = 2 * len(EXPECTATIONS) + len(extra)
     print(f"\n{passed}/{total} expectations met "
           f"({n_findings} total findings)")
-    return 0 if passed == total else 1
+    if passed != total:
+        return 1
+    # the new eval set: per-backend precision/recall over 5 sample PRs
+    per_backend_scores()
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+diff --git a/auth.js b/auth.js
+--- a/auth.js
++++ b/auth.js
+@@ -1,4 +1,9 @@
+ const session = loadSession();
+ 
++// TODO: rotate the service token after the incident
++const service_token = "svc-9f8e7d6c5b4a3210xy";
++
+ function refresh() {
++  console.log("refreshing session", session.id);
+   return session.refresh();
+ }

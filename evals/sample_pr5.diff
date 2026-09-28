@@ -1,0 +1,13 @@
+diff --git a/api.py b/api.py
+--- a/api.py
++++ b/api.py
+@@ -1,4 +1,10 @@
+ def fetch(url):
+     try:
+         return get(url)
+     except ConnectionError:
+-        raise
++        # TODO: add retries instead of failing once
++        return None
++    except:
++        return None

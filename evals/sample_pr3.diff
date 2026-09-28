@@ -1,0 +1,15 @@
+diff --git a/worker.py b/worker.py
+--- a/worker.py
++++ b/worker.py
+@@ -3,6 +3,14 @@
+ import json
+ import os
+ 
++PRIVATE_KEY = """-----BEGIN RSA PRIVATE KEY-----
++MIIBOgIBAAJBAKxhY2tlZCBkYXRhIG5vdCByZWFs
++-----END RSA PRIVATE KEY-----"""
++
+ def process(item):
++    import pdb; pdb.set_trace()
++    # FIXME: drops items on timeout
+     return transform(item)
