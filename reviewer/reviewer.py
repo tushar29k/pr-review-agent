@@ -78,26 +78,29 @@ class MockBackend(ReviewBackend):
 _SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
-def make_backend(name: str | None = None) -> ReviewBackend:
+def make_backend(name: str | None = None,
+                 prompt_version: str | None = None) -> ReviewBackend:
     """Pick a reviewer backend by name. "mock" is the default and needs
     nothing; "free" is the free-tier API backend (needs LLM_API_KEY) and is
-    auto-selected when a key is set but REVIEWER_BACKEND isn't."""
+    auto-selected when a key is set but REVIEWER_BACKEND isn't.
+    prompt_version picks the reviewer prompt version (None reads
+    REVIEWER_PROMPT_VERSION, default "v1"); the mock ignores it."""
     raw = (name or os.environ.get("REVIEWER_BACKEND") or "").strip().lower()
     name = raw or ("free" if os.environ.get("LLM_API_KEY") else "mock")
     if name == "mock":
         return MockBackend()
     if name == "openai":
         from .openai_backend import OpenAIBackend  # lazy: openai pkg is optional
-        return OpenAIBackend()
+        return OpenAIBackend(prompt_version=prompt_version)
     if name == "anthropic":
         from .anthropic_backend import AnthropicBackend  # lazy: anthropic pkg is optional
-        return AnthropicBackend()
+        return AnthropicBackend(prompt_version=prompt_version)
     if name == "local":
         from .local_backend import LocalBackend  # lazy: weights load on first use
-        return LocalBackend()
+        return LocalBackend(prompt_version=prompt_version)
     if name == "free":
         from .free_backend import FreeBackend  # lazy: needs LLM_API_KEY
-        return FreeBackend()
+        return FreeBackend(prompt_version=prompt_version)
     raise ValueError(f"unknown reviewer backend {name!r} — want 'mock', 'openai', 'anthropic', 'local', or 'free'")
 
 

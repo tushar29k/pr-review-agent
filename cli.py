@@ -22,6 +22,8 @@ def main() -> int:
     ap.add_argument("--diff", required=True, help="Path to a unified diff file")
     ap.add_argument("--reviewer", default=os.environ.get("REVIEWER_BACKEND"),
                     help="mock (default), openai, anthropic, or local")
+    ap.add_argument("--prompt-version", default=os.environ.get("REVIEWER_PROMPT_VERSION"),
+                    help="reviewer prompt version from prompts/ (default v1)")
     ap.add_argument("--log", default=os.environ.get("REVIEW_LOG_PATH"),
                     help="append a per-review cost/latency record to this JSONL file")
     args = ap.parse_args()
@@ -34,7 +36,8 @@ def main() -> int:
         return 1
 
     try:
-        backend = make_backend(args.reviewer)
+        backend = make_backend(args.reviewer,
+                               prompt_version=args.prompt_version)
     except (RuntimeError, ValueError) as exc:
         print(f"reviewer backend error: {exc}", file=sys.stderr)
         return 2

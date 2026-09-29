@@ -14,39 +14,13 @@ import sys
 
 from .config import confidence_to_severity
 from .diff_parser import FileDiff
+from .prompts import render_user, system_prompt
 from .reviewer import ReviewBackend
 
 _ENV_KEY = "OPENAI_API_KEY"
 _DEFAULT_MODEL = "gpt-4o-mini"  # cheap enough for review duty
 
 _SEVERITIES = {"critical", "warning", "info"}
-
-# strict JSON-only output: no prose to strip, one schema to validate.
-# confidence is calibrated on our side (config.py) — the model just reports
-# honestly how sure it is; 0.8+ lands critical, 0.5+ warning, below is info.
-_SYSTEM_PROMPT = (
-    "You review code diffs. Reply with ONLY a JSON array of findings, no prose. "
-    "Each finding: {\"severity\": \"critical\"|\"warning\"|\"info\", "
-    "\"line\": <new-file line number or null>, "
-    "\"confidence\": <0.0-1.0, how sure you are this is a real problem>, "
-    "\"message\": \"<why it matters>\"}. "
-    "Only flag added lines. critical = exploitable bugs/leaked secrets, "
-    "warning = real defects, info = minor. Empty array if nothing is wrong. "
-    "Report confidence honestly — don't inflate it to get attention."
-)
-
-
-def _file_prompt(f: FileDiff) -> str:
-    # one file per call: keeps prompts small and findings attributable
-    lines = []
-    for h in f.hunks:
-        marker = {"add": "+", "del": "-", "ctx": " "}[h.kind]
-        no = h.new_no if h.new_no is not None else h.old_no
-        lines.append(f"{marker} {no}: {h.text}")
-    new_flag = " (new file)" if f.is_new else ""
-    return ("File: " + f.path + new_flag +
-            "\nDiff (line numbers are new-file lines):\n" +
-            "\n".join(lines))
 
 
 def _strip_fences(text: str) -> str:
@@ -101,7 +75,9 @@ def _parse_findings(text: str, f: FileDiff) -> list[dict]:
 class OpenAIBackend(ReviewBackend):
     """Per-file diff review via the OpenAI API. Fails soft, fails loud."""
 
-    def __init__(self, model: str | None = None, api_key: str | None = None):
+    def __init__(self, model: str | None = None, api_key: str | None = None,
+                 prompt_version: str | None = None):
+        self._prompt_version = prompt_version  # None = REVIEWER_PROMPT_VERSION
         try:
             from openai import OpenAI
         except ImportError as exc:
@@ -123,8 +99,10 @@ class OpenAIBackend(ReviewBackend):
             resp = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": _file_prompt(f)},
+                    {"role": "system",
+                     "content": system_prompt(self._prompt_version)},
+                    {"role": "user",
+                     "content": render_user(f, self._prompt_version)},
                 ],
                 temperature=0,  # reviews shouldn't be creative
             )

@@ -1,0 +1,3 @@
+Reviewing: {file_path}{new_flag}
+Only (+) lines are new code — the rest is context. New-file line numbers are shown after each marker.
+{diff}

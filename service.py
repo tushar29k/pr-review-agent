@@ -13,6 +13,7 @@ import os
 
 from reviewer.comments import findings_to_markdown
 from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url
+from reviewer.prompts import current_version
 from reviewer.reviewer import Reviewer, make_backend
 
 app = FastAPI(title="pr-review-agent")
@@ -80,7 +81,8 @@ def info() -> dict:
             "provider": client.provider if real else None,
             "model": client.model if real else None,
             "last_error": getattr(backend, "last_error", None),
-            "backend": type(backend).__name__}
+            "backend": type(backend).__name__,
+            "prompt_version": current_version()}
 
 
 @app.post("/review-pr", response_model=PRReviewResponse)

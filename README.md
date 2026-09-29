@@ -123,15 +123,20 @@ reviewer/
   diff_parser.py   parse unified diffs into FileDiff structures
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
   config.py        severity calibration: confidence → critical/warning/info
+  prompts.py       versioned reviewer prompts (REVIEWER_PROMPT_VERSION, default v1)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   cost.py          per-review cost/latency logging to JSONL (token + price table)
   comments.py      render findings as a markdown PR comment
   github.py        parse PR links + fetch diffs from the GitHub API (stdlib only)
 cli.py             CLI: review a diff file, exit 1 on critical findings
 service.py         FastAPI service: POST /review, POST /review-pr, GET /health
+prompts/
+  v1/              the original reviewer prompt (system.txt + user.txt)
+  v2/              reworked challenger variant (explicit no-fences, line discipline)
 evals/
   sample_pr.diff   sample PR with planted issues (secret, print, bare except…)
   run_eval.py      asserts every planted issue is caught (18/18)
+  ab_prompts.py    A/B every prompt version on the eval set, declares a winner
   cost_table.py    print a cost/latency table from a review-log JSONL file
   sample_reviews.jsonl  10 real mock-backend review runs feeding cost_table.py
 ROADMAP.md         where this goes next
@@ -140,6 +145,26 @@ ROADMAP.md         where this goes next
 ## Evals
 
 `evals/run_eval.py` runs the reviewer over a sample PR with five deliberately planted problems and asserts each one is caught: the AWS key flagged critical, the debug `print`, the bare `except:`, the TODO surfaced, and the new-file-without-tests nudge. The planted-issue checks run twice — once under `reviewer: mock` and once under `reviewer: anthropic` (keyless Anthropic degrades to the mock heuristics, so the same expectations hold). Six more expectations cover the PR-link flow: parsing canonical and `/pulls/` URLs, rejecting non-PR links, finding shape, severity ordering, and a clean diff rendering "No issues found". Two more cover the local-model backend: `reviewer: local` reviews the sample PR fully offline (real weights, zero network) and degrades gracefully to the mock heuristics when no weights are cached. 18/18 passing means the pipeline works end to end. Add your own diffs to `evals/` as the check set grows.
+
+## Prompt versioning
+
+The instruction text the model backends send lives in `prompts/<version>/`
+(`system.txt` + `user.txt`), not in the backend code — the four model
+backends used to carry identical copies of it. `v1` is that original prompt;
+`v2` is a reworked challenger (explicit no-markdown-fences rule, line-number
+discipline, "when unsure lower the confidence" calibration guidance).
+
+Switch versions with `REVIEWER_PROMPT_VERSION` (default `v1`), the
+`--prompt-version` CLI flag, or the `prompt_version` constructor arg on the
+model backends. An unknown version falls back to `v1` with a stderr note —
+a typo never silently reviews with the wrong instructions.
+
+`python evals/ab_prompts.py` runs the 5-sample eval set against every
+version on disk and declares a winner by mean F1 across backends
+(tie-breaks: fewest false positives, then the incumbent keeps the crown).
+With no API keys only the prompt-independent mock runs, so the A/B is
+informational until a real backend is keyed — the script says so when
+that's the case.
 
 ## Cost & latency logging
 
