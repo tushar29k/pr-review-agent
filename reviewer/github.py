@@ -38,10 +38,13 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
     return m.group("owner"), m.group("repo"), int(m.group("number"))
 
 
-def _get(path: str, accept: str) -> tuple[bytes, int]:
+def _get(path: str, accept: str, token: str | None = None) -> tuple[bytes, int]:
     # returns raw body + status; raises PRFetchError with a friendly detail
-    req = urllib.request.Request(
-        _API + path, headers={**_UA, "Accept": accept})
+    headers = {**_UA, "Accept": accept}
+    if token:
+        # app install token or PAT: raises the rate limit, unlocks private repos
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(_API + path, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             return resp.read(), resp.status
@@ -58,10 +61,11 @@ def _get(path: str, accept: str) -> tuple[bytes, int]:
         raise PRFetchError("Couldn't reach GitHub — check your connection") from exc
 
 
-def fetch_pr_diff(owner: str, repo: str, number: int) -> tuple[str, dict]:
+def fetch_pr_diff(owner: str, repo: str, number: int,
+                  token: str | None = None) -> tuple[str, dict]:
     """Returns (diff_text, meta). meta has the bits the UI header needs."""
     meta_path = f"/repos/{owner}/{repo}/pulls/{number}"
-    body, _ = _get(meta_path, "application/vnd.github+json")
+    body, _ = _get(meta_path, "application/vnd.github+json", token)
     try:
         pr = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -81,7 +85,7 @@ def fetch_pr_diff(owner: str, repo: str, number: int) -> tuple[str, dict]:
         "state": pr.get("state") or "",
     }
 
-    diff, _ = _get(meta_path, "application/vnd.github.v3.diff")
+    diff, _ = _get(meta_path, "application/vnd.github.v3.diff", token)
     text = diff.decode("utf-8", errors="replace")
     if not text.strip():
         raise PRFetchError("That PR has no diff to review — maybe it's empty?")

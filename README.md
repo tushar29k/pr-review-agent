@@ -26,6 +26,17 @@ curl -X POST localhost:8000/review-pr \
 
 Bad links get a 422 with a plain-language explanation; unreachable or private PRs get a friendly error instead of a stack trace. Unauthenticated GitHub calls are rate-limited (~60/hr per IP), so the errors say so honestly.
 
+## GitHub webhook receiver (dry run)
+
+Point a GitHub App's webhook at `POST /webhooks/github`. On `pull_request`
+`opened`/`synchronize` events the service fetches the PR diff via the GitHub
+API; anything else is ignored. Delivery signatures (`X-Hub-Signature-256`)
+are verified against `WEBHOOK_SECRET` when set — fail closed; when unset,
+verification is skipped with a warning. `GITHUB_TOKEN` (app install token or
+PAT) raises the rate limit and unlocks private repos; public PRs fetch fine
+without it. Dry-run stage: the diff is fetched and kept, but nothing is
+posted back to GitHub — posting is the next step.
+
 ## The idea
 
 Every team says "we review every PR", and every team has PRs that get a 👀 and a merge. The boring-but-important stuff — a secret pasted into a config, a `print` left in, a 900-line diff nobody actually read — is exactly what machines are good at catching, every single time, without getting tired.
