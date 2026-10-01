@@ -13,7 +13,7 @@ import json
 import os
 
 from reviewer.comments import findings_to_markdown
-from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url
+from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url, post_comment
 from reviewer.prompts import current_version
 from reviewer.reviewer import Reviewer, make_backend
 from reviewer.webhook import handle_event, verify_signature
@@ -28,6 +28,10 @@ _webhook_secret = os.environ.get("WEBHOOK_SECRET")
 # GITHUB_TOKEN set on the host (app install token / PAT) raises the api rate
 # limit and unlocks private repos for webhook diff fetches
 _github_token = os.environ.get("GITHUB_TOKEN")
+# WEBHOOK_DRY_RUN=0 turns live comment posting on; default stays dry-run so
+# no webhook delivery can ever surprise-post on someone's PR
+_webhook_dry_run = os.environ.get("WEBHOOK_DRY_RUN", "1").lower() not in (
+    "0", "false", "no")
 # latest webhook result (dry-run stage: fetched diffs, no comments posted yet)
 _last_webhook: dict = {}
 
@@ -131,12 +135,13 @@ from fastapi.responses import FileResponse as _FileResponse
 
 @app.post("/webhooks/github")
 async def github_webhook(request: Request) -> dict:
-    """GitHub App webhook receiver (dry run).
+    """GitHub App webhook receiver.
 
     Verifies X-Hub-Signature-256 against WEBHOOK_SECRET when set (fails closed;
     skips with a warning when unset), then on pull_request opened/synchronize
-    fetches the PR diff via the GitHub API. Fetches the diff but posts nothing
-    back — posting is a later roadmap item.
+    fetches the PR diff, reviews it, and posts the markdown review as a PR
+    comment. Dry-run by default (nothing posted); set WEBHOOK_DRY_RUN=0 with
+    a GITHUB_TOKEN to post live.
     """
     body = await request.body()  # signature needs the exact bytes
     if not verify_signature(body, request.headers.get("x-hub-signature-256"),
@@ -162,6 +167,21 @@ async def github_webhook(request: Request) -> dict:
         diff = result["diff"]
         reply["diff_chars"] = len(diff)
         reply["diff_preview"] = diff[:500]
+        # same review pipeline as /review, then post it back on the PR
+        owner, name = result["repo"].split("/", 1)
+        findings = _reviewer.review_and_log(diff, log_path=_log_path)
+        markdown = findings_to_markdown(findings)
+        try:
+            posted = post_comment(owner, name, result["number"], markdown,
+                                  dry_run=_webhook_dry_run, token=_github_token)
+        except PRFetchError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        reply["review"] = {"finding_count": len(findings),
+                           "markdown_preview": markdown[:300]}
+        reply["comment"] = {k: v for k, v in posted.items()
+                            if k != "payload"}
+        if posted.get("dry_run"):
+            reply["comment"]["payload"] = posted["payload"]
     return reply
 
 _UI_INDEX = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "ui", "index.html")

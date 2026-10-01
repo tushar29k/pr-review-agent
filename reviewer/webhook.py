@@ -1,7 +1,8 @@
 """GitHub webhook receiver: pull_request events -> fetch the PR diff.
 
-stdlib only, same as reviewer/github.py. Dry-run stage: we fetch and return
-the diff but never post anything back to GitHub (posting is a later item).
+stdlib only, same as reviewer/github.py. This layer stays pure: it fetches
+and returns the diff, never posts anything back. The service posts the
+review comment on top of this (dry-run by default).
 """
 
 from __future__ import annotations

@@ -30,12 +30,15 @@ Bad links get a 422 with a plain-language explanation; unreachable or private PR
 
 Point a GitHub App's webhook at `POST /webhooks/github`. On `pull_request`
 `opened`/`synchronize` events the service fetches the PR diff via the GitHub
-API; anything else is ignored. Delivery signatures (`X-Hub-Signature-256`)
-are verified against `WEBHOOK_SECRET` when set — fail closed; when unset,
-verification is skipped with a warning. `GITHUB_TOKEN` (app install token or
-PAT) raises the rate limit and unlocks private repos; public PRs fetch fine
-without it. Dry-run stage: the diff is fetched and kept, but nothing is
-posted back to GitHub — posting is the next step.
+API, reviews it, and posts the rendered markdown review as a PR comment via
+`POST /repos/{owner}/{repo}/issues/{number}/comments`. Delivery signatures
+(`X-Hub-Signature-256`) are verified against `WEBHOOK_SECRET` when set —
+fail closed; when unset, verification is skipped with a warning. `GITHUB_TOKEN`
+(app install token or PAT) raises the rate limit and unlocks private repos;
+public PRs fetch fine without it. Dry-run by default: the reply shows exactly
+what would be posted, and nothing goes to GitHub. Set `WEBHOOK_DRY_RUN=0`
+(with `GITHUB_TOKEN`) to post live — the dry-run default means a webhook
+delivery can never surprise-post on someone's PR.
 
 ## The idea
 

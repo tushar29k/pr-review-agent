@@ -16,6 +16,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from reviewer.webhook import handle_event, verify_signature  # noqa: E402
+from reviewer.github import PRFetchError, post_comment  # noqa: E402
 
 # a tiny, stable public PR: psf/requests#7616 (a ruff pre-commit version bump)
 _FIXTURE_REPO = "psf/requests"
@@ -84,6 +85,73 @@ r = handle_event("issues", "opened", payload)
 check("issues events are ignored", r["handled"] is False)
 r = handle_event("pull_request", "labeled", payload)
 check("pull_request/labeled is ignored", r["handled"] is False)
+
+print("== post_comment: dry-run against the test PR ==")
+md = "## 🤖 PR review\n\nNo issues found."
+res = post_comment("psf", "requests", _FIXTURE_PR, md, dry_run=True)
+check("dry-run reports not posted", res["posted"] is False
+      and res["dry_run"] is True)
+check("dry-run targets the issues comments endpoint",
+      res["url"] == "https://api.github.com/repos/psf/requests/issues/7616/comments")
+check("dry-run payload carries the markdown body",
+      res["payload"] == {"body": md})
+
+# dry-run must never reach the network, even if something is misconfigured
+def _boom(req, timeout=None):
+    raise AssertionError("dry-run must not open a connection")
+_orig = urllib.request.urlopen
+urllib.request.urlopen = _boom
+try:
+    res = post_comment("psf", "requests", _FIXTURE_PR, md, dry_run=True)
+    check("dry-run makes zero http calls", res["posted"] is False)
+finally:
+    urllib.request.urlopen = _orig
+
+print("== post_comment: live payload shape ==")
+captured = {}
+
+
+class _FakeResp:
+    def read(self):
+        return b'{"id": 42, "html_url": "https://github.com/x/y/pull/1#issuecomment-42"}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _capture(req, timeout=None):
+    captured["method"] = req.get_method()
+    captured["url"] = req.full_url
+    captured["headers"] = dict(req.header_items())
+    captured["body"] = json.loads(req.data.decode("utf-8"))
+    return _FakeResp()
+
+
+urllib.request.urlopen = _capture
+try:
+    live = post_comment("psf", "requests", _FIXTURE_PR, md,
+                        dry_run=False, token="tok123")
+finally:
+    urllib.request.urlopen = _orig
+check("live mode posts to the same comments endpoint",
+      captured.get("method") == "POST"
+      and captured.get("url") == "https://api.github.com/repos/psf/requests/issues/7616/comments")
+check("live request sends the markdown as the body field",
+      captured.get("body") == {"body": md})
+check("live request carries the token as bearer auth",
+      captured.get("headers", {}).get("Authorization") == "Bearer tok123")
+check("live result reports the posted comment",
+      live["posted"] is True and live["comment_id"] == 42)
+
+try:
+    post_comment("psf", "requests", _FIXTURE_PR, md,
+                 dry_run=False, token=None)
+    check("live posting without a token refuses", False)
+except ValueError:
+    check("live posting without a token refuses", True)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

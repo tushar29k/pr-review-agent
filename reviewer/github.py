@@ -90,3 +90,45 @@ def fetch_pr_diff(owner: str, repo: str, number: int,
     if not text.strip():
         raise PRFetchError("That PR has no diff to review — maybe it's empty?")
     return text, meta
+
+
+def post_comment(owner: str, repo: str, number: int, body: str,
+                 dry_run: bool = True, token: str | None = None) -> dict:
+    """Post the rendered markdown review as a PR comment.
+
+    dry_run (the default) returns exactly what *would* be posted without
+    touching the network — the safe way to demo against a test PR. Live
+    posting needs a token; GitHub takes no anonymous comments, and spamming
+    someone's PR should stay a deliberate choice.
+    """
+    # the issues comments endpoint is the stable, official way to comment on PRs
+    path = f"/repos/{owner}/{repo}/issues/{number}/comments"
+    payload = {"body": body}
+    if dry_run:
+        return {"posted": False, "dry_run": True,
+                "url": _API + path, "payload": payload}
+    if not token:
+        raise ValueError(
+            "Live posting needs GITHUB_TOKEN — refusing to post anonymously")
+    data = json.dumps(payload).encode("utf-8")
+    headers = {**_UA, "Accept": "application/vnd.github+json",
+               "Content-Type": "application/json",
+               "Authorization": f"Bearer {token}"}
+    req = urllib.request.Request(_API + path, data=data,
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            comment = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise PRFetchError("PR not found — can't comment on it") from exc
+        if exc.code in (401, 403):
+            raise PRFetchError(
+                "GitHub rejected the comment — token lacks permission?") from exc
+        raise PRFetchError(
+            f"GitHub answered with {exc.code} — try again in a bit") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise PRFetchError("Couldn't reach GitHub — check your connection") from exc
+    return {"posted": True, "dry_run": False,
+            "comment_url": comment.get("html_url") or "",
+            "comment_id": comment.get("id")}
