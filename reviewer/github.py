@@ -61,6 +61,27 @@ def _get(path: str, accept: str, token: str | None = None) -> tuple[bytes, int]:
         raise PRFetchError("Couldn't reach GitHub — check your connection") from exc
 
 
+def _post(path: str, payload: dict, token: str) -> dict:
+    # one shared live-post path; raises PRFetchError with friendly details
+    data = json.dumps(payload).encode("utf-8")
+    headers = {**_UA, "Accept": "application/vnd.github+json",
+               "Content-Type": "application/json",
+               "Authorization": f"Bearer {token}"}
+    req = urllib.request.Request(_API + path, data=data,
+                                 headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise PRFetchError("PR not found — can't comment on it") from exc
+        if exc.code in (401, 403):
+            raise PRFetchError(
+                "GitHub rejected the request — token lacks permission?") from exc
+        raise PRFetchError(
+            f"GitHub answered with {exc.code} — try again in a bit") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise PRFetchError("Couldn't reach GitHub — check your connection") from exc
 def fetch_pr_diff(owner: str, repo: str, number: int,
                   token: str | None = None) -> tuple[str, dict]:
     """Returns (diff_text, meta). meta has the bits the UI header needs."""
@@ -110,25 +131,40 @@ def post_comment(owner: str, repo: str, number: int, body: str,
     if not token:
         raise ValueError(
             "Live posting needs GITHUB_TOKEN — refusing to post anonymously")
-    data = json.dumps(payload).encode("utf-8")
-    headers = {**_UA, "Accept": "application/vnd.github+json",
-               "Content-Type": "application/json",
-               "Authorization": f"Bearer {token}"}
-    req = urllib.request.Request(_API + path, data=data,
-                                 headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            comment = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            raise PRFetchError("PR not found — can't comment on it") from exc
-        if exc.code in (401, 403):
-            raise PRFetchError(
-                "GitHub rejected the comment — token lacks permission?") from exc
-        raise PRFetchError(
-            f"GitHub answered with {exc.code} — try again in a bit") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise PRFetchError("Couldn't reach GitHub — check your connection") from exc
+    comment = _post(path, payload, token)
     return {"posted": True, "dry_run": False,
             "comment_url": comment.get("html_url") or "",
             "comment_id": comment.get("id")}
+
+
+def post_review_comments(owner: str, repo: str, number: int,
+                         comments: list[dict], commit_id: str | None = None,
+                         dry_run: bool = True, token: str | None = None) -> dict:
+    """Post per-finding review comments on a PR via the reviews API.
+
+    comments is [{path, line, side, body, ...}] — extras are dropped, the
+    wire payload only carries path/line/side/body. dry_run (the default)
+    returns exactly what *would* be posted without touching the network;
+    live mode refuses without a token, same convention as post_comment.
+    """
+    # the reviews endpoint turns a list of positions into one review with
+    # inline comments, so one finding reads right next to its code
+    path = f"/repos/{owner}/{repo}/pulls/{number}/reviews"
+    wire = []
+    for c in comments:
+        item = {"path": c["path"], "line": c["line"], "body": c["body"]}
+        if c.get("side"):
+            item["side"] = c["side"]
+        wire.append(item)
+    payload = {"event": "COMMENT", "comments": wire}
+    if commit_id:
+        payload["commit_id"] = commit_id
+    if dry_run:
+        return {"posted": False, "dry_run": True,
+                "url": _API + path, "payload": payload}
+    if not token:
+        raise ValueError(
+            "Live posting needs GITHUB_TOKEN — refusing to post anonymously")
+    review = _post(path, payload, token)
+    return {"posted": True, "dry_run": False,
+            "review_id": review.get("id")}

@@ -16,7 +16,8 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from reviewer.webhook import handle_event, verify_signature  # noqa: E402
-from reviewer.github import PRFetchError, post_comment  # noqa: E402
+from reviewer.github import (PRFetchError, post_comment,  # noqa: E402
+                             post_review_comments)
 
 # a tiny, stable public PR: psf/requests#7616 (a ruff pre-commit version bump)
 _FIXTURE_REPO = "psf/requests"
@@ -149,6 +150,143 @@ check("live result reports the posted comment",
 try:
     post_comment("psf", "requests", _FIXTURE_PR, md,
                  dry_run=False, token=None)
+    check("live posting without a token refuses", False)
+except ValueError:
+    check("live posting without a token refuses", True)
+
+print("== map_findings_to_positions on the sample PR fixtures ==")
+from reviewer.inline import map_findings_to_positions  # noqa: E402
+from reviewer.reviewer import Reviewer  # noqa: E402
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ground = json.load(open(os.path.join(_HERE, "evals", "sample_prs.json")))
+_mock = Reviewer()  # mock backend: deterministic planted findings, no keys
+planted_checked = 0
+for _sample in _ground["samples"]:
+    _diff = open(os.path.join(_HERE, "evals", _sample["diff"])).read()
+    _findings = _mock.review(_diff)
+    _mapped = map_findings_to_positions(_diff, _findings)
+    _pos = {(c["path"], c["line"]) for c in _mapped}
+    # same ±1 rule the eval suite uses: a planted issue matches a mapped
+    # comment when the file is the same and the line is within ±1
+    for _e in _sample["expected"]:
+        if _e["line"] is None:
+            continue  # file-level findings have no anchor by design
+        planted_checked += 1
+        _hit = any(p[0] == _e["file"] and abs(p[1] - _e["line"]) <= 1
+                   for p in _pos)
+        check(f"{_sample['id']}: planted '{_e['check']}' "
+              f"{_e['file']}:{_e['line']} anchors to a diff line", _hit)
+    check(f"{_sample['id']}: every inline comment has path/line/side/body",
+          all(c.get("path") and c.get("line") is not None
+              and c.get("side") == "RIGHT" and c.get("body") for c in _mapped))
+
+# a context (unchanged) line inside a hunk still anchors a comment —
+# GitHub allows RIGHT-side comments on context lines
+_ctx = map_findings_to_positions(
+    open(os.path.join(_HERE, "evals", "sample_pr5.diff")).read(),
+    [{"file": "api.py", "line": 2, "severity": "info",
+      "check": "style", "message": "ctx line check"}])
+check("context lines inside a hunk anchor with side=RIGHT",
+      len(_ctx) == 1 and _ctx[0]["side"] == "RIGHT"
+      and _ctx[0]["path"] == "api.py" and _ctx[0]["line"] == 2)
+
+# unanchored findings are skipped, not forced onto the wire
+_junk_diff = open(os.path.join(_HERE, "evals", "sample_pr.diff")).read()
+_junk = [
+    {"file": "payments.py", "line": 999, "severity": "warning",
+     "check": "x", "message": "line past the end of the diff"},
+    {"file": "not-a-file.py", "line": 1, "severity": "warning",
+     "check": "x", "message": "file not in the diff"},
+    {"file": "payments.py", "line": None, "severity": "info",
+     "check": "missing_tests", "message": "file-level finding"},
+    # pr1's README.md changed too, but no finding points at it here —
+    # a finding on an untouched line of a touched file is still skipped
+    {"file": "payments.py", "line": 100, "severity": "info",
+     "check": "x", "message": "untouched line"},
+]
+check("findings on unchanged lines, unknown files, or no line are skipped",
+      map_findings_to_positions(_junk_diff, _junk) == [])
+
+# the comment body says where it came from at a glance
+_body_mapped = map_findings_to_positions(
+    _junk_diff,
+    [{"file": "payments.py", "line": 4, "severity": "critical",
+      "check": "secrets", "message": "possible key committed"}])
+check("inline body carries severity, check, and message",
+      len(_body_mapped) == 1
+      and "**critical**" in _body_mapped[0]["body"]
+      and "`secrets`" in _body_mapped[0]["body"]
+      and "possible key committed" in _body_mapped[0]["body"])
+print(f"  ({planted_checked} planted findings checked across "
+      f"{len(_ground['samples'])} sample PRs)")
+
+print("== post_review_comments: dry-run payload ==")
+_sample_comments = [
+    {"path": "payments.py", "line": 4, "side": "RIGHT",
+     "body": "**critical** `secrets`\n\npossible key", "severity": "critical",
+     "check": "secrets"},  # extras must not reach the wire
+]
+_res = post_review_comments("psf", "requests", _FIXTURE_PR, _sample_comments)
+check("dry-run reports not posted", _res["posted"] is False
+      and _res["dry_run"] is True)
+check("dry-run targets the pulls reviews endpoint",
+      _res["url"] == "https://api.github.com/repos/psf/requests/pulls/7616/reviews")
+check("dry-run payload is event COMMENT with wire comments only",
+      _res["payload"] == {
+          "event": "COMMENT",
+          "comments": [{"path": "payments.py", "line": 4, "side": "RIGHT",
+                        "body": "**critical** `secrets`\n\npossible key"}]})
+
+urllib.request.urlopen = _boom
+try:
+    _res = post_review_comments("psf", "requests", _FIXTURE_PR,
+                                _sample_comments, dry_run=True)
+    check("dry-run makes zero http calls", _res["posted"] is False)
+finally:
+    urllib.request.urlopen = _orig
+
+_with_sha = post_review_comments("psf", "requests", _FIXTURE_PR,
+                                 _sample_comments, commit_id="abc123")
+check("commit_id rides along when given",
+      _with_sha["payload"].get("commit_id") == "abc123")
+
+print("== post_review_comments: live payload shape ==")
+_captured = {}
+
+
+def _capture2(req, timeout=None):
+    _captured["method"] = req.get_method()
+    _captured["url"] = req.full_url
+    _captured["headers"] = dict(req.header_items())
+    _captured["body"] = json.loads(req.data.decode("utf-8"))
+    return _FakeResp()
+
+
+urllib.request.urlopen = _capture2
+try:
+    _live = post_review_comments("psf", "requests", _FIXTURE_PR,
+                                 _sample_comments, dry_run=False,
+                                 token="tok123")
+finally:
+    urllib.request.urlopen = _orig
+check("live mode posts to the reviews endpoint",
+      _captured.get("method") == "POST"
+      and _captured.get("url")
+      == "https://api.github.com/repos/psf/requests/pulls/7616/reviews")
+check("live request sends the review payload",
+      _captured.get("body", {}).get("event") == "COMMENT"
+      and _captured.get("body", {}).get("comments") == [
+          {"path": "payments.py", "line": 4, "side": "RIGHT",
+           "body": "**critical** `secrets`\n\npossible key"}])
+check("live request carries the token as bearer auth",
+      _captured.get("headers", {}).get("Authorization") == "Bearer tok123")
+check("live result reports the posted review",
+      _live["posted"] is True)
+
+try:
+    post_review_comments("psf", "requests", _FIXTURE_PR, _sample_comments,
+                         dry_run=False, token=None)
     check("live posting without a token refuses", False)
 except ValueError:
     check("live posting without a token refuses", True)

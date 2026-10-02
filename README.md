@@ -40,6 +40,15 @@ what would be posted, and nothing goes to GitHub. Set `WEBHOOK_DRY_RUN=0`
 (with `GITHUB_TOKEN`) to post live — the dry-run default means a webhook
 delivery can never surprise-post on someone's PR.
 
+Alongside the summary comment the receiver also builds inline review
+comments: each finding is mapped to a `(path, line, side)` position inside
+the diff (`reviewer/inline.py`), and the positions become a single
+`POST /repos/{owner}/{repo}/pulls/{number}/reviews` review with
+`event: "COMMENT"` — so the finding reads right next to its code. Findings
+on unchanged lines (or with no line at all, like `missing_tests`) have no
+diff anchor and are skipped; they only appear in the summary. Dry-run is
+the default here too: nothing reaches GitHub without a token.
+
 ## The idea
 
 Every team says "we review every PR", and every team has PRs that get a 👀 and a merge. The boring-but-important stuff — a secret pasted into a config, a `print` left in, a 900-line diff nobody actually read — is exactly what machines are good at catching, every single time, without getting tired.

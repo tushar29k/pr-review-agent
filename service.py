@@ -13,7 +13,9 @@ import json
 import os
 
 from reviewer.comments import findings_to_markdown
-from reviewer.github import PRFetchError, fetch_pr_diff, parse_pr_url, post_comment
+from reviewer.github import (PRFetchError, fetch_pr_diff, parse_pr_url,
+                             post_comment, post_review_comments)
+from reviewer.inline import map_findings_to_positions
 from reviewer.prompts import current_version
 from reviewer.reviewer import Reviewer, make_backend
 from reviewer.webhook import handle_event, verify_signature
@@ -182,6 +184,20 @@ async def github_webhook(request: Request) -> dict:
                             if k != "payload"}
         if posted.get("dry_run"):
             reply["comment"]["payload"] = posted["payload"]
+        # inline line-level comments alongside the summary: findings map to
+        # diff positions; the ones on unchanged lines have no anchor and
+        # are skipped by the mapper, so they only appear in the summary
+        inline = map_findings_to_positions(diff, findings)
+        if inline:
+            inline_posted = post_review_comments(
+                owner, name, result["number"], inline,
+                dry_run=_webhook_dry_run, token=_github_token)
+            reply["inline_comments"] = {
+                "count": len(inline),
+                "positions": [(c["path"], c["line"]) for c in inline],
+                "posted": inline_posted["posted"],
+                "dry_run": inline_posted.get("dry_run"),
+            }
     return reply
 
 _UI_INDEX = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "ui", "index.html")
