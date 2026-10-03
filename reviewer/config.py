@@ -24,25 +24,30 @@ def _threshold(env: str, default: float) -> float:
 SEVERITY_CRITICAL: float = _threshold("SEVERITY_CRITICAL", 0.80)
 SEVERITY_WARNING: float = _threshold("SEVERITY_WARNING", 0.50)
 
-# the documented thresholds, evaluated in order: confidence >= critical
-# becomes critical, >= warning becomes warning, anything below is info.
+# evaluated in order: confidence >= critical becomes critical,
+# >= warning becomes warning, anything below is info.
 # 0.80 / 0.50 because critical should mean "block the merge", which needs
 # strong conviction; 0.50 keeps weak model guesses as info noise instead
 # of warning-fatigue.
-SEVERITY_THRESHOLDS: tuple[tuple[float, str], ...] = (
-    (SEVERITY_CRITICAL, "critical"),
-    (SEVERITY_WARNING, "warning"),
-)
 
 
-def confidence_to_severity(confidence: float) -> str:
-    """Map a 0.0-1.0 model confidence onto critical/warning/info."""
+def confidence_to_severity(confidence: float,
+                           critical: float | None = None,
+                           warning: float | None = None) -> str:
+    """Map a 0.0-1.0 model confidence onto critical/warning/info.
+
+    The optional overrides let a repo's .pr-review.yaml remap the scale
+    per-review; without them the module defaults (and their env-var
+    overrides) apply."""
+    crit = SEVERITY_CRITICAL if critical is None else critical
+    warn = SEVERITY_WARNING if warning is None else warning
     try:
         c = float(confidence)
     except (TypeError, ValueError):
         c = 0.0  # unreadable confidence — treat it as a weak guess
     c = min(1.0, max(0.0, c))
-    for threshold, severity in SEVERITY_THRESHOLDS:
-        if c >= threshold:
-            return severity
+    if c >= crit:
+        return "critical"
+    if c >= warn:
+        return "warning"
     return "info"

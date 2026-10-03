@@ -14,8 +14,9 @@ from . import checks
 from .checks import TODO_RE
 from .config import confidence_to_severity
 from .cost import append_record, build_record
-from .dedupe import dedupe_findings
+from .dedupe import dedupe_findings, _is_model
 from .diff_parser import FileDiff, parse_diff
+from .repo_config import RepoConfig
 
 
 class ReviewBackend:
@@ -105,11 +106,32 @@ def make_backend(name: str | None = None,
 
 
 class Reviewer:
-    def __init__(self, backend: ReviewBackend | None = None):
+    def __init__(self, backend: ReviewBackend | None = None,
+                 config: RepoConfig | None = None):
         self.backend = backend or MockBackend()
+        # RepoConfig from .pr-review.yaml: which checks run and whose
+        # severity scale the model findings calibrate through
+        self.config = config or RepoConfig()
 
     def review(self, diff_text: str) -> list[dict]:
         findings, _ = self.review_timed(diff_text)
+        return findings
+
+    def _recalibrate(self, findings: list[dict]) -> list[dict]:
+        """Remap model findings' severities through the repo's thresholds.
+
+        Backends calibrate at creation with the module defaults; this pass
+        re-derives severity from the stored confidence so a .pr-review.yaml
+        actually changes what the review reports. Deterministic findings
+        keep their fixed severities — a secret is critical, no vote."""
+        critical, warning = self.config.thresholds()
+        if critical is None and warning is None:
+            return findings
+        for f in findings:
+            conf = f.get("confidence")
+            if _is_model(f) and isinstance(conf, (int, float)):
+                f["severity"] = confidence_to_severity(
+                    conf, critical=critical, warning=warning)
         return findings
 
     def review_timed(self, diff_text: str) -> tuple[list[dict], dict[str, float]]:
@@ -119,16 +141,18 @@ class Reviewer:
         stages = {"parse_ms": (time.perf_counter() - t) * 1000}
 
         t = time.perf_counter()
-        findings = checks.run_all(files)
+        findings = checks.run_all(files, self.config.enabled_checks)
         stages["checks_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()
-        for f in files:
-            if not f.is_binary:
-                findings += self.backend.review_file(f)
+        if self.config.check_enabled("llm"):
+            for f in files:
+                if not f.is_binary:
+                    findings += self.backend.review_file(f)
         stages["model_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()
+        findings = self._recalibrate(findings)
         findings = dedupe_findings(findings)  # one finding per spot, not per layer
         stages["dedupe_ms"] = (time.perf_counter() - t) * 1000
         # deterministic order: severity first, then file, then line

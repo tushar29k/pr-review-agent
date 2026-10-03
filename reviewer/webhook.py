@@ -11,7 +11,8 @@ import hashlib
 import hmac
 import logging
 
-from reviewer.github import fetch_pr_diff
+from reviewer.github import fetch_pr_diff, fetch_repo_config
+from reviewer.repo_config import RepoConfig, parse_config_text
 
 log = logging.getLogger("pr-review-agent.webhook")
 
@@ -50,5 +51,12 @@ def handle_event(event: str, action: str | None, payload: dict,
     owner, name = repo.split("/", 1)
     # token from the app install when we have one; public PRs fetch fine without
     diff, meta = fetch_pr_diff(owner, name, number, token=token)
+    # the PR's own .pr-review.yaml, if it has one — read at the head sha so
+    # a config added in the PR itself takes effect on its own review
+    head_sha = ((payload.get("pull_request") or {}).get("head") or {}).get("sha")
+    repo_config: RepoConfig | None = None
+    cfg_text = fetch_repo_config(owner, name, ref=head_sha, token=token)
+    if cfg_text and cfg_text.strip():
+        repo_config = parse_config_text(cfg_text)
     return {"handled": True, "repo": repo, "number": number,
-            "diff": diff, "meta": meta}
+            "diff": diff, "meta": meta, "repo_config": repo_config}

@@ -7,6 +7,7 @@ errors are translated into plain-language messages instead of raw codes.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import urllib.error
@@ -93,6 +94,7 @@ def fetch_pr_diff(owner: str, repo: str, number: int,
         raise PRFetchError("GitHub sent back something unexpected") from exc
 
     user = pr.get("user") or {}
+    head = pr.get("head") or {}
     meta = {
         "title": pr.get("title") or "",
         "repo": f"{owner}/{repo}",
@@ -104,6 +106,7 @@ def fetch_pr_diff(owner: str, repo: str, number: int,
         "deletions": pr.get("deletions") or 0,
         "changed_files": pr.get("changed_files") or 0,
         "state": pr.get("state") or "",
+        "head_sha": head.get("sha"),  # not a PRMeta field — popped by callers
     }
 
     diff, _ = _get(meta_path, "application/vnd.github.v3.diff", token)
@@ -111,6 +114,30 @@ def fetch_pr_diff(owner: str, repo: str, number: int,
     if not text.strip():
         raise PRFetchError("That PR has no diff to review — maybe it's empty?")
     return text, meta
+
+
+def fetch_repo_config(owner: str, repo: str, ref: str | None = None,
+                      token: str | None = None) -> str | None:
+    """Fetch the repo's .pr-review.yaml at a ref (the PR head when given).
+
+    Returns the raw file text, or None when the repo has no config file.
+    Any failure degrades to None — a missing or unreadable config must
+    never break a review, the built-in defaults just apply."""
+    path = f"/repos/{owner}/{repo}/contents/.pr-review.yaml"
+    if ref:
+        path += f"?ref={ref}"
+    try:
+        body, _ = _get(path, "application/vnd.github+json", token)
+    except PRFetchError:
+        return None  # no config file, rate limit, network hiccup — defaults
+    try:
+        payload = json.loads(body)
+        content = payload.get("content") or ""
+        if payload.get("encoding") == "base64":
+            return base64.b64decode(content).decode("utf-8", errors="replace")
+        return content
+    except (ValueError, KeyError):
+        return None
 
 
 def post_comment(owner: str, repo: str, number: int, body: str,

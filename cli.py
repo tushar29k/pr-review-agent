@@ -7,6 +7,8 @@ Usage:
     python cli.py --diff evals/sample_pr.diff --reviewer anthropic   # needs ANTHROPIC_API_KEY
     python cli.py --diff evals/sample_pr.diff --reviewer local    # small HF model, offline if cached
     python cli.py --diff evals/sample_pr.diff --log reviews.jsonl # + cost/latency JSONL record
+    python cli.py --diff evals/sample_pr.diff --config repo/.pr-review.yaml
+        # without --config, .pr-review.yaml is auto-discovered in the cwd
 """
 
 import argparse
@@ -14,6 +16,7 @@ import os
 import sys
 
 from reviewer.comments import findings_to_markdown
+from reviewer.repo_config import discover_config
 from reviewer.reviewer import Reviewer, make_backend
 
 
@@ -26,6 +29,9 @@ def main() -> int:
                     help="reviewer prompt version from prompts/ (default v1)")
     ap.add_argument("--log", default=os.environ.get("REVIEW_LOG_PATH"),
                     help="append a per-review cost/latency record to this JSONL file")
+    ap.add_argument("--config", default=os.environ.get("PR_REVIEW_CONFIG"),
+                    help="path to a .pr-review.yaml; without it, .pr-review.yaml "
+                         "is auto-discovered in the current directory")
     args = ap.parse_args()
 
     try:
@@ -42,7 +48,7 @@ def main() -> int:
         print(f"reviewer backend error: {exc}", file=sys.stderr)
         return 2
 
-    findings = Reviewer(backend).review_and_log(
+    findings = Reviewer(backend, config=discover_config(args.config)).review_and_log(
         diff_text, log_path=args.log, backend=args.reviewer)
     print(findings_to_markdown(findings))
     # exit 1 if anything critical turned up — handy for CI gates

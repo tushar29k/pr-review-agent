@@ -93,6 +93,26 @@ Model backends report a `confidence` (0.0–1.0) per finding; `reviewer/config.p
 
 Overrides without touching code: `SEVERITY_CRITICAL` and `SEVERITY_WARNING` env vars (clamped to 0–1, invalid values fall back to the defaults above). Deterministic checks bypass calibration — they're certain by design (`confidence: 1.0`), so a leaked secret is always critical no matter what a model thinks.
 
+## Repo config: `.pr-review.yaml`
+
+Drop a `.pr-review.yaml` in your repo root and reviews of that repo pick it up automatically — the CLI discovers it in the current directory (`--config` points at one explicitly), and the GitHub App reads it from the PR head, so a config added in the PR tunes its own review. Discovery order: `--config` flag → repo root → built-in defaults.
+
+```yaml
+enabled_checks:        # only these checks run; anything else is skipped
+  - secrets
+  - debug_leftovers
+  - todos
+  - binary
+  - diff_size
+  - missing_tests
+  - llm                # the model pass (all backends)
+severity_thresholds:   # remap model confidences; deterministic checks
+  critical: 0.90       # keep their fixed severities regardless
+  warning: 0.60
+```
+
+Example: a repo drowning in TODO noise sets `enabled_checks` without `todos`, or raises `warning:` to `0.70` so only confident model findings become warnings. Unknown check names and bad threshold values are ignored with a stderr note — a broken config never breaks a review.
+
 ## How to run
 
 Prerequisites: Python 3.10+.
@@ -146,12 +166,14 @@ reviewer/
   diff_parser.py   parse unified diffs into FileDiff structures
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
   config.py        severity calibration: confidence → critical/warning/info
+  repo_config.py   .pr-review.yaml loader: enabled_checks, severity_thresholds
   prompts.py       versioned reviewer prompts (REVIEWER_PROMPT_VERSION, default v1)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   cost.py          per-review cost/latency logging to JSONL (token + price table)
   comments.py      render findings as a markdown PR comment
-  github.py        parse PR links + fetch diffs from the GitHub API (stdlib only)
+  github.py        parse PR links + fetch diffs and .pr-review.yaml (stdlib only)
 cli.py             CLI: review a diff file, exit 1 on critical findings
+                   (--config for an explicit .pr-review.yaml; cwd auto-discovered)
 service.py         FastAPI service: POST /review, POST /review-pr, GET /health
 prompts/
   v1/              the original reviewer prompt (system.txt + user.txt)

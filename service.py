@@ -13,10 +13,11 @@ import json
 import os
 
 from reviewer.comments import findings_to_markdown
-from reviewer.github import (PRFetchError, fetch_pr_diff, parse_pr_url,
-                             post_comment, post_review_comments)
+from reviewer.github import (PRFetchError, fetch_pr_diff, fetch_repo_config,
+                             parse_pr_url, post_comment, post_review_comments)
 from reviewer.inline import map_findings_to_positions
 from reviewer.prompts import current_version
+from reviewer.repo_config import RepoConfig, parse_config_text
 from reviewer.reviewer import Reviewer, make_backend
 from reviewer.webhook import handle_event, verify_signature
 
@@ -70,6 +71,16 @@ class PRReviewResponse(ReviewResponse):
     pr: PRMeta
 
 
+def _reviewer_for_repo_config(owner: str, repo: str,
+                              head_sha: str | None) -> Reviewer:
+    # the PR's own .pr-review.yaml tunes the review; missing file or any
+    # failure just means the built-in defaults. shares the service backend.
+    cfg_text = fetch_repo_config(owner, repo, ref=head_sha)
+    config = parse_config_text(cfg_text) if cfg_text and cfg_text.strip() \
+        else RepoConfig()
+    return Reviewer(_reviewer.backend, config=config)
+
+
 @app.post("/review", response_model=ReviewResponse)
 def review(req: ReviewRequest) -> ReviewResponse:
     findings = _reviewer.review_and_log(req.diff, log_path=_log_path)
@@ -119,8 +130,10 @@ def review_pr(req: PRReviewRequest) -> PRReviewResponse:
         # 404 vs 502: not found is a client-ish problem, the rest is ours
         status = 404 if "not found" in str(exc).lower() else 502
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    head_sha = meta.pop("head_sha", None)  # fetch helper detail, not a PRMeta field
 
-    findings = _reviewer.review_and_log(diff_text, log_path=_log_path)
+    findings = _reviewer_for_repo_config(
+        owner, repo, head_sha).review_and_log(diff_text, log_path=_log_path)
     return PRReviewResponse(
         markdown=findings_to_markdown(findings),
         finding_count=len(findings),
@@ -171,7 +184,9 @@ async def github_webhook(request: Request) -> dict:
         reply["diff_preview"] = diff[:500]
         # same review pipeline as /review, then post it back on the PR
         owner, name = result["repo"].split("/", 1)
-        findings = _reviewer.review_and_log(diff, log_path=_log_path)
+        cfg = result.get("repo_config") or RepoConfig()
+        reviewer = Reviewer(_reviewer.backend, config=cfg)
+        findings = reviewer.review_and_log(diff, log_path=_log_path)
         markdown = findings_to_markdown(findings)
         try:
             posted = post_comment(owner, name, result["number"], markdown,

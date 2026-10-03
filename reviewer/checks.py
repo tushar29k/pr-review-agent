@@ -120,13 +120,21 @@ def check_tests_for_new_files(files: list[FileDiff]) -> list[dict]:
     return out
 
 
-def run_all(files: list[FileDiff]) -> list[dict]:
+def run_all(files: list[FileDiff],
+            enabled_checks: frozenset[str] | None = None) -> list[dict]:
+    """Run the deterministic checks. enabled_checks (from .pr-review.yaml)
+    lists the check names that run — anything else is skipped; None runs all."""
     findings: list[dict] = []
+    per_file = (("secrets", check_secrets),
+                ("debug_leftovers", check_debug_leftovers),
+                ("todos", check_todos),
+                ("binary", check_binary))
     for f in files:
-        findings += check_secrets(f)
-        findings += check_debug_leftovers(f)
-        findings += check_todos(f)
-        findings += check_binary(f)
-    findings += check_diff_size(files)
-    findings += check_tests_for_new_files(files)
+        for name, fn in per_file:
+            if enabled_checks is None or name in enabled_checks:
+                findings += fn(f)
+    if enabled_checks is None or "diff_size" in enabled_checks:
+        findings += check_diff_size(files)
+    if enabled_checks is None or "missing_tests" in enabled_checks:
+        findings += check_tests_for_new_files(files)
     return findings
