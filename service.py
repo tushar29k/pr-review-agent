@@ -48,6 +48,7 @@ class ReviewResponse(BaseModel):
     finding_count: int
     has_critical: bool
     findings: list[dict] = []  # the raw findings, so the UI can style each one
+    skipped_files: list[str] = []  # vendored/generated paths the review skipped
 
 
 class PRReviewRequest(BaseModel):
@@ -83,12 +84,13 @@ def _reviewer_for_repo_config(owner: str, repo: str,
 
 @app.post("/review", response_model=ReviewResponse)
 def review(req: ReviewRequest) -> ReviewResponse:
-    findings = _reviewer.review_and_log(req.diff, log_path=_log_path)
+    findings, skipped = _reviewer.review_and_log(req.diff, log_path=_log_path)
     return ReviewResponse(
-        markdown=findings_to_markdown(findings),
+        markdown=findings_to_markdown(findings, skipped),
         finding_count=len(findings),
         has_critical=any(f["severity"] == "critical" for f in findings),
         findings=findings,
+        skipped_files=skipped,
     )
 
 
@@ -132,13 +134,14 @@ def review_pr(req: PRReviewRequest) -> PRReviewResponse:
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     head_sha = meta.pop("head_sha", None)  # fetch helper detail, not a PRMeta field
 
-    findings = _reviewer_for_repo_config(
+    findings, skipped = _reviewer_for_repo_config(
         owner, repo, head_sha).review_and_log(diff_text, log_path=_log_path)
     return PRReviewResponse(
-        markdown=findings_to_markdown(findings),
+        markdown=findings_to_markdown(findings, skipped),
         finding_count=len(findings),
         has_critical=any(f["severity"] == "critical" for f in findings),
         findings=findings,
+        skipped_files=skipped,
         pr=PRMeta(**meta),
     )
 
@@ -186,8 +189,8 @@ async def github_webhook(request: Request) -> dict:
         owner, name = result["repo"].split("/", 1)
         cfg = result.get("repo_config") or RepoConfig()
         reviewer = Reviewer(_reviewer.backend, config=cfg)
-        findings = reviewer.review_and_log(diff, log_path=_log_path)
-        markdown = findings_to_markdown(findings)
+        findings, skipped = reviewer.review_and_log(diff, log_path=_log_path)
+        markdown = findings_to_markdown(findings, skipped)
         try:
             posted = post_comment(owner, name, result["number"], markdown,
                                   dry_run=_webhook_dry_run, token=_github_token)

@@ -155,6 +155,7 @@ button.link:hover{color:var(--ink);border-color:var(--ink);border-style:solid}
 .finding p{font-size:.9rem;color:var(--ink)}
 .clean{background:rgba(8,31,69,.6);border:1px dashed var(--line);border-radius:3px;
   padding:1.4rem;color:var(--ink-dim);font-size:.9rem;font-family:var(--mono)}
+.skipnote{margin-top:.6rem;font-size:.78rem;font-family:var(--mono);color:var(--ink-faint)}
 .err{background:rgba(255,107,107,.08);border:1px dashed var(--red);border-radius:3px;
   padding:.9rem 1.1rem;color:var(--red);margin-top:1rem;font-size:.88rem;font-family:var(--mono)}
 .loading{color:var(--ink-dim);font-size:.88rem;font-family:var(--mono);margin-top:1rem}
@@ -265,6 +266,11 @@ function renderResult(out, d){
     (sevCount.info?'<span class="chip info">'+sevCount.info+' info</span>':'')+
     '<button class="copybtn" onclick="copyMD(this)">Copy markdown</button></div>';
 
+  var skipped=d.skipped_files||[];
+  var skipNote=skipped.length?'<div class="skipnote">Skipped '+skipped.length+
+    ' generated/vendored file'+(skipped.length>1?'s':'')+' (ignored by pattern): '+
+    skipped.map(esc).join(', ')+'</div>':'';
+
   var body;
   if(!d.findings.length){
     body='<div class="clean">No issues found. Either it\u2019s clean or I\u2019m not looking hard enough — give the logic a human skim anyway.</div>';
@@ -277,7 +283,7 @@ function renderResult(out, d){
         '<p>'+esc(f.message)+'</p></li>';
     }).join('')+'</ul>';
   }
-  out.innerHTML=chips+'<div class="review">'+body+'</div>';
+  out.innerHTML=chips+skipNote+'<div class="review">'+body+'</div>';
   out.querySelector('.copybtn').setAttribute('data-md', d.markdown);
 }
 

@@ -109,6 +109,13 @@ enabled_checks:        # only these checks run; anything else is skipped
 severity_thresholds:   # remap model confidences; deterministic checks
   critical: 0.90       # keep their fixed severities regardless
   warning: 0.60
+ignore:                # fnmatch patterns for vendored/generated files
+  - vendor/*           # skipped files are named in the review output,
+  - "*.min.js"         # never silently dropped; replaces the built-in
+                       # defaults when present (an empty list disables
+                       # ignoring). Files with generated-code markers
+                       # (@generated, "DO NOT EDIT") are always skipped.
+                       # CLI flag --ignore-pattern layers on top.
 ```
 
 Example: a repo drowning in TODO noise sets `enabled_checks` without `todos`, or raises `warning:` to `0.70` so only confident model findings become warnings. Unknown check names and bad threshold values are ignored with a stderr note — a broken config never breaks a review.
@@ -165,8 +172,10 @@ real model for the review judgement:
 reviewer/
   diff_parser.py   parse unified diffs into FileDiff structures
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
+  ignore.py        vendored/generated file ignore patterns + marker sniffing
   config.py        severity calibration: confidence → critical/warning/info
-  repo_config.py   .pr-review.yaml loader: enabled_checks, severity_thresholds
+  repo_config.py   .pr-review.yaml loader: enabled_checks, severity_thresholds,
+                   ignore patterns (vendor/*, *.min.js, lockfiles, …)
   prompts.py       versioned reviewer prompts (REVIEWER_PROMPT_VERSION, default v1)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   cost.py          per-review cost/latency logging to JSONL (token + price table)

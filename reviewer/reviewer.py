@@ -16,6 +16,7 @@ from .config import confidence_to_severity
 from .cost import append_record, build_record
 from .dedupe import dedupe_findings, _is_model
 from .diff_parser import FileDiff, parse_diff
+from .ignore import effective_patterns, is_ignored
 from .repo_config import RepoConfig
 
 
@@ -114,7 +115,7 @@ class Reviewer:
         self.config = config or RepoConfig()
 
     def review(self, diff_text: str) -> list[dict]:
-        findings, _ = self.review_timed(diff_text)
+        findings, _, _ = self.review_timed(diff_text)
         return findings
 
     def _recalibrate(self, findings: list[dict]) -> list[dict]:
@@ -134,10 +135,18 @@ class Reviewer:
                     conf, critical=critical, warning=warning)
         return findings
 
-    def review_timed(self, diff_text: str) -> tuple[list[dict], dict[str, float]]:
-        """Same review, plus wall-clock ms per stage (parse/checks/model/dedupe)."""
+    def review_timed(self, diff_text: str
+                     ) -> tuple[list[dict], dict[str, float], list[str]]:
+        """Same review, plus wall-clock ms per stage (parse/checks/model/dedupe).
+        The third element is the paths of files skipped by the ignore
+        patterns — reported to the caller, never silently dropped."""
         t = time.perf_counter()
         files = parse_diff(diff_text)
+        # vendored/generated files never reach the checks or the model —
+        # their paths come back so the review output can say they were skipped
+        patterns = effective_patterns(self.config.ignore_patterns)
+        skipped = [f.path for f in files if is_ignored(f, patterns)]
+        files = [f for f in files if f.path not in skipped]
         stages = {"parse_ms": (time.perf_counter() - t) * 1000}
 
         t = time.perf_counter()
@@ -159,17 +168,20 @@ class Reviewer:
         findings.sort(key=lambda d: (
             _SEVERITY_RANK.get(d["severity"], 9), d["file"], d["line"] or 0))
         stages["total_ms"] = sum(stages.values())  # parse+checks+model+dedupe
-        return findings, stages
+        return findings, stages, skipped
 
     def backend_name(self) -> str:
         # "MockBackend" -> "mock" — matches the price table keys in cost.py
         return type(self.backend).__name__.replace("Backend", "").lower()
 
     def review_and_log(self, diff_text: str, log_path: str | None = None,
-                       backend: str | None = None) -> list[dict]:
-        """Review, and append one JSONL record when a log path is given."""
-        findings, stages = self.review_timed(diff_text)
+                       backend: str | None = None
+                       ) -> tuple[list[dict], list[str]]:
+        """Review, and append one JSONL record when a log path is given.
+        Returns (findings, skipped_files) — the skipped paths so callers
+        can show them in the review output instead of dropping them."""
+        findings, stages, skipped = self.review_timed(diff_text)
         if log_path:
             append_record(log_path, build_record(
                 diff_text, findings, stages, backend or self.backend_name()))
-        return findings
+        return findings, skipped

@@ -9,6 +9,8 @@ Usage:
     python cli.py --diff evals/sample_pr.diff --log reviews.jsonl # + cost/latency JSONL record
     python cli.py --diff evals/sample_pr.diff --config repo/.pr-review.yaml
         # without --config, .pr-review.yaml is auto-discovered in the cwd
+    python cli.py --diff evals/sample_pr.diff --ignore-pattern "docs/*"
+        # extra fnmatch patterns, layered on top of the config (or defaults)
 """
 
 import argparse
@@ -16,6 +18,7 @@ import os
 import sys
 
 from reviewer.comments import findings_to_markdown
+from reviewer.ignore import effective_patterns
 from reviewer.repo_config import discover_config
 from reviewer.reviewer import Reviewer, make_backend
 
@@ -32,6 +35,10 @@ def main() -> int:
     ap.add_argument("--config", default=os.environ.get("PR_REVIEW_CONFIG"),
                     help="path to a .pr-review.yaml; without it, .pr-review.yaml "
                          "is auto-discovered in the current directory")
+    ap.add_argument("--ignore-pattern", action="append", default=[],
+                    help="extra fnmatch pattern for vendored/generated files "
+                         "(repeatable); layered on top of the config patterns "
+                         "or the built-in defaults")
     args = ap.parse_args()
 
     try:
@@ -48,9 +55,16 @@ def main() -> int:
         print(f"reviewer backend error: {exc}", file=sys.stderr)
         return 2
 
-    findings = Reviewer(backend, config=discover_config(args.config)).review_and_log(
+    config = discover_config(args.config)
+    if args.ignore_pattern:
+        # cli patterns layer on top of whatever the config (or the
+        # defaults) already ignores
+        config.ignore_patterns = (effective_patterns(config.ignore_patterns)
+                                  + args.ignore_pattern)
+
+    findings, skipped = Reviewer(backend, config=config).review_and_log(
         diff_text, log_path=args.log, backend=args.reviewer)
-    print(findings_to_markdown(findings))
+    print(findings_to_markdown(findings, skipped))
     # exit 1 if anything critical turned up — handy for CI gates
     return 1 if any(f["severity"] == "critical" for f in findings) else 0
 

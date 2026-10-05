@@ -1,6 +1,6 @@
 """Repo-level config: .pr-review.yaml in the reviewed repo's root.
 
-Two knobs today:
+Three knobs today:
 
     enabled_checks:
       - secrets
@@ -9,17 +9,24 @@ Two knobs today:
     severity_thresholds:
       critical: 0.90
       warning: 0.60
+    ignore:                # files matching these fnmatch patterns are skipped
+      - vendor/*           # (replaces the built-in defaults when present;
+      - docs/*             #  an empty list disables ignoring entirely)
 
 enabled_checks lists the checks that run — anything not listed is skipped.
 "llm" is the model pass (all backends). severity_thresholds overrides the
 defaults in config.py (0.80 / 0.50): model confidences remap through these.
+ignore lists fnmatch path patterns for vendored/generated files the review
+skips (skipped files are reported, never silently dropped); omitted means
+the defaults in reviewer/ignore.py. Files carrying generated-code markers
+(@generated, "DO NOT EDIT"…) are always skipped, config or not.
 
 Discovery order: explicit --config path > .pr-review.yaml in the repo root
 > .pr-review.yaml in the cwd (running the cli from your repo root) >
 built-in defaults.
 
-Hand-rolled subset parser, stdlib only — the file only needs these two
-shapes (a string list and a float mapping), and reviewer/github.py keeps
+Hand-rolled subset parser, stdlib only — the file only needs these three
+shapes (string lists and a float mapping), and reviewer/github.py keeps
 the same stdlib-only convention.
 """
 
@@ -40,10 +47,12 @@ KNOWN_CHECKS = frozenset({
 
 @dataclass
 class RepoConfig:
-    # None = run everything / use the config.py defaults
+    # None = run everything / use the config.py defaults /
+    # use the default ignore patterns in reviewer/ignore.py
     enabled_checks: frozenset[str] | None = None
     critical_threshold: float | None = None
     warning_threshold: float | None = None
+    ignore_patterns: list[str] | None = None
 
     def check_enabled(self, name: str) -> bool:
         return self.enabled_checks is None or name in self.enabled_checks
@@ -64,10 +73,13 @@ def _clamp01(value: str, where: str) -> float | None:
 
 
 def parse_config_text(text: str) -> RepoConfig:
-    """Parse just the two shapes we support: a string list under
-    enabled_checks and a float mapping under severity_thresholds.
-    Anything else is ignored — a config file must never crash a review."""
+    """Parse just the three shapes we support: string lists under
+    enabled_checks and ignore, and a float mapping under
+    severity_thresholds. Anything else is ignored — a config file must
+    never crash a review."""
     enabled: list[str] = []
+    ignore: list[str] = []
+    saw_ignore = False
     thresholds: dict[str, float] = {}
     section: str | None = None
     for raw in text.splitlines():
@@ -76,13 +88,19 @@ def parse_config_text(text: str) -> RepoConfig:
             continue
         if not raw.startswith((" ", "\t")):
             section = None
-            if line.rstrip().rstrip(":") == "enabled_checks" and line.rstrip().endswith(":"):
+            stripped = line.rstrip().rstrip(":")
+            if stripped == "enabled_checks" and line.rstrip().endswith(":"):
                 section = "enabled"
-            elif line.rstrip().rstrip(":") == "severity_thresholds" and line.rstrip().endswith(":"):
+            elif stripped == "severity_thresholds" and line.rstrip().endswith(":"):
                 section = "thresholds"
+            elif stripped == "ignore" and line.rstrip().endswith(":"):
+                section = "ignore"
+                saw_ignore = True  # an empty list means "ignore nothing"
             continue
         if section == "enabled" and line.strip().startswith("- "):
             enabled.append(line.strip()[2:].strip().strip("\"'"))
+        elif section == "ignore" and line.strip().startswith("- "):
+            ignore.append(line.strip()[2:].strip().strip("\"'"))
         elif section == "thresholds" and ":" in line:
             key, _, val = line.strip().partition(":")
             key, val = key.strip(), val.strip().strip("\"'")
@@ -101,6 +119,7 @@ def parse_config_text(text: str) -> RepoConfig:
         enabled_checks=enabled_checks,
         critical_threshold=thresholds.get("critical"),
         warning_threshold=thresholds.get("warning"),
+        ignore_patterns=ignore if saw_ignore else None,
     )
 
 
