@@ -49,6 +49,14 @@ on unchanged lines (or with no line at all, like `missing_tests`) have no
 diff anchor and are skipped; they only appear in the summary. Dry-run is
 the default here too: nothing reaches GitHub without a token.
 
+The receiver also reports the review as a check run on the PR's head
+commit (`POST /repos/{owner}/{repo}/check-runs`): any critical finding
+blocks the check with conclusion `failure` — the red X on the PR —
+while warnings and infos never block (`success`). The output names the
+blocking findings with their severity counts, so the PR author sees why
+the check is red at a glance. Same dry-run default and token rule as
+the comment posting.
+
 ## The idea
 
 Every team says "we review every PR", and every team has PRs that get a 👀 and a merge. The boring-but-important stuff — a secret pasted into a config, a `print` left in, a 900-line diff nobody actually read — is exactly what machines are good at catching, every single time, without getting tired.

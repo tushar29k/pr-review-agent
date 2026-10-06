@@ -14,7 +14,8 @@ import os
 
 from reviewer.comments import findings_to_markdown
 from reviewer.github import (PRFetchError, fetch_pr_diff, fetch_repo_config,
-                             parse_pr_url, post_comment, post_review_comments)
+                             parse_pr_url, post_check_run, post_comment,
+                             post_review_comments)
 from reviewer.inline import map_findings_to_positions
 from reviewer.prompts import current_version
 from reviewer.repo_config import RepoConfig, parse_config_text
@@ -216,6 +217,23 @@ async def github_webhook(request: Request) -> dict:
                 "posted": inline_posted["posted"],
                 "dry_run": inline_posted.get("dry_run"),
             }
+        # check-run status on the PR head: a critical finding blocks the
+        # check (the red X on the PR); a clean review passes it. dry-run
+        # default, like the comments — nothing reaches GitHub without a token
+        head_sha = (result.get("meta") or {}).get("head_sha")
+        if head_sha:
+            try:
+                check_run = post_check_run(owner, name, head_sha, findings,
+                                           dry_run=_webhook_dry_run,
+                                           token=_github_token)
+            except PRFetchError as exc:
+                raise HTTPException(status_code=502,
+                                    detail=str(exc)) from exc
+            reply["check_run"] = {"conclusion": check_run["conclusion"],
+                                  "posted": check_run["posted"],
+                                  "dry_run": check_run.get("dry_run")}
+            if check_run.get("dry_run"):
+                reply["check_run"]["payload"] = check_run["payload"]
     return reply
 
 _UI_INDEX = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "ui", "index.html")

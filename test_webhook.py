@@ -291,5 +291,93 @@ try:
 except ValueError:
     check("live posting without a token refuses", True)
 
+print("== post_check_run: critical findings block the check ==")
+from reviewer.github import post_check_run  # noqa: E402
+
+_crit_findings = [
+    {"file": "payments.py", "line": 4, "severity": "critical",
+     "check": "secrets", "message": "possible key committed"},
+    {"file": "payments.py", "line": 9, "severity": "warning",
+     "check": "debug_leftovers", "message": "print() left in"},
+]
+_cr = post_check_run("psf", "requests", "deadbeef", _crit_findings)
+check("dry-run reports not posted", _cr["posted"] is False
+      and _cr["dry_run"] is True)
+check("a critical finding makes the conclusion failure",
+      _cr["conclusion"] == "failure")
+check("dry-run targets the check-runs endpoint",
+      _cr["url"] == "https://api.github.com/repos/psf/requests/check-runs")
+check("payload carries the head sha and completed status",
+      _cr["payload"]["head_sha"] == "deadbeef"
+      and _cr["payload"]["status"] == "completed")
+check("payload names the check and the blocking conclusion",
+      _cr["payload"]["name"] == "pr-review-agent"
+      and _cr["payload"]["conclusion"] == "failure"
+      and "1 critical" in _cr["payload"]["output"]["title"])
+check("output summary carries the severity counts",
+      "critical 1" in _cr["payload"]["output"]["summary"]
+      and "warning 1" in _cr["payload"]["output"]["summary"])
+check("output text names the blocking finding",
+      "payments.py:4" in _cr["payload"]["output"]["text"]
+      and "secrets" in _cr["payload"]["output"]["text"])
+
+urllib.request.urlopen = _boom
+try:
+    _cr2 = post_check_run("psf", "requests", "deadbeef", _crit_findings,
+                          dry_run=True)
+    check("dry-run makes zero http calls", _cr2["posted"] is False)
+finally:
+    urllib.request.urlopen = _orig
+
+_clean = post_check_run(
+    "psf", "requests", "deadbeef",
+    [{"file": "x.py", "line": 2, "severity": "warning",
+      "check": "style", "message": "nit"}])
+check("warnings alone don't block: conclusion is success",
+      _clean["conclusion"] == "success")
+check("clean output title says no critical findings",
+      "no critical findings" in _clean["payload"]["output"]["title"])
+
+_clear = post_check_run("psf", "requests", "deadbeef", [])
+check("zero findings also passes", _clear["conclusion"] == "success")
+
+print("== post_check_run: live payload shape ==")
+_captured3 = {}
+
+
+def _capture3(req, timeout=None):
+    _captured3["method"] = req.get_method()
+    _captured3["url"] = req.full_url
+    _captured3["headers"] = dict(req.header_items())
+    _captured3["body"] = json.loads(req.data.decode("utf-8"))
+    return _FakeResp()
+
+
+urllib.request.urlopen = _capture3
+try:
+    _live3 = post_check_run("psf", "requests", "deadbeef", _crit_findings,
+                            dry_run=False, token="tok123")
+finally:
+    urllib.request.urlopen = _orig
+check("live mode posts to the check-runs endpoint",
+      _captured3.get("method") == "POST"
+      and _captured3.get("url")
+      == "https://api.github.com/repos/psf/requests/check-runs")
+check("live request sends the blocking conclusion",
+      _captured3.get("body", {}).get("conclusion") == "failure"
+      and _captured3.get("body", {}).get("head_sha") == "deadbeef"
+      and _captured3.get("body", {}).get("output", {}).get("summary"))
+check("live request carries the token as bearer auth",
+      _captured3.get("headers", {}).get("Authorization") == "Bearer tok123")
+check("live result reports the check run conclusion",
+      _live3["posted"] is True and _live3["conclusion"] == "failure")
+
+try:
+    post_check_run("psf", "requests", "deadbeef", _crit_findings,
+                   dry_run=False, token=None)
+    check("live posting without a token refuses", False)
+except ValueError:
+    check("live posting without a token refuses", True)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

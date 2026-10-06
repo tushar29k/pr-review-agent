@@ -195,3 +195,47 @@ def post_review_comments(owner: str, repo: str, number: int,
     review = _post(path, payload, token)
     return {"posted": True, "dry_run": False,
             "review_id": review.get("id")}
+
+
+def post_check_run(owner: str, repo: str, head_sha: str, findings: list[dict],
+                   dry_run: bool = True, token: str | None = None,
+                   name: str = "pr-review-agent") -> dict:
+    """Report the review as a GitHub check run on the PR's head commit.
+
+    Any critical finding blocks the check (conclusion "failure" — the red X
+    on the PR); warnings and infos are notes, never blockers. dry_run (the
+    default) returns exactly what *would* be posted without touching the
+    network; live mode refuses without a token, same as the comment posts.
+    """
+    # only severities we know about count toward the summary
+    counts = {"critical": 0, "warning": 0, "info": 0}
+    for f in findings:
+        if f.get("severity") in counts:
+            counts[f["severity"]] += 1
+    crits = [f for f in findings if f.get("severity") == "critical"]
+    conclusion = "failure" if crits else "success"
+    title = (f"pr-review-agent: {len(crits)} critical finding(s) block this PR"
+             if crits else "pr-review-agent: no critical findings — clear")
+    summary = (f"findings: critical {counts['critical']}, "
+               f"warning {counts['warning']}, info {counts['info']}")
+    text = "\n".join(
+        f"- {f.get('file')}:{f.get('line')} `{f.get('check')}` — {f.get('message')}"
+        for f in crits[:20])
+    payload = {
+        "name": name,
+        "head_sha": head_sha,
+        "status": "completed",
+        "conclusion": conclusion,
+        "output": {"title": title, "summary": summary, "text": text},
+    }
+    path = f"/repos/{owner}/{repo}/check-runs"
+    if dry_run:
+        return {"posted": False, "dry_run": True, "conclusion": conclusion,
+                "url": _API + path, "payload": payload}
+    if not token:
+        raise ValueError(
+            "Live posting needs GITHUB_TOKEN — refusing to post anonymously")
+    run = _post(path, payload, token)
+    return {"posted": True, "dry_run": False, "conclusion": conclusion,
+            "check_run_id": run.get("id"),
+            "check_run_url": run.get("html_url") or ""}
