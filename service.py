@@ -13,6 +13,9 @@ import json
 import os
 
 from reviewer.comments import findings_to_markdown
+from reviewer.feedback import (fetch_review_comments,
+                               finding_from_inline_body, ingest_live,
+                               posted_comments_for_pr, record_posted_comment)
 from reviewer.github import (PRFetchError, fetch_pr_diff, fetch_repo_config,
                              parse_pr_url, post_check_run, post_comment,
                              post_review_comments)
@@ -36,6 +39,12 @@ _github_token = os.environ.get("GITHUB_TOKEN")
 # no webhook delivery can ever surprise-post on someone's PR
 _webhook_dry_run = os.environ.get("WEBHOOK_DRY_RUN", "1").lower() not in (
     "0", "false", "no")
+# feedback capture: FEEDBACK_LOG_PATH is where 👍/👎 reaction events land;
+# the registry remembers comments/reviews posted live so the ingest
+# endpoint can find them again (GitHub sends no webhooks for reactions)
+_feedback_log_path = os.environ.get("FEEDBACK_LOG_PATH", "feedback.jsonl")
+_feedback_registry_path = os.environ.get("FEEDBACK_REGISTRY_PATH",
+                                         "feedback_comments.jsonl")
 # latest webhook result (dry-run stage: fetched diffs, no comments posted yet)
 _last_webhook: dict = {}
 
@@ -146,6 +155,76 @@ def review_pr(req: PRReviewRequest) -> PRReviewResponse:
         pr=PRMeta(**meta),
     )
 
+
+class FeedbackIngestRequest(BaseModel):
+    owner: str
+    repo: str
+    pr_number: int
+    # a specific comment to ingest, or None to sweep everything we posted
+    # live on this PR (from the posted-comment registry)
+    comment_id: int | None = None
+    comment_kind: str = "summary"  # summary (markdown review) or inline
+    dry_run: bool = True  # pass dry_run=False to actually write the JSONL
+
+
+@app.post("/feedback/ingest")
+def ingest_feedback(req: FeedbackIngestRequest) -> dict:
+    """Ingest 👍/👎 reactions on comments we posted into the feedback JSONL.
+
+    GitHub sends no webhook events for reactions, so this is the polling
+    path: given a comment (or every comment we posted live on a PR), fetch
+    its reactions and append one event per reaction to FEEDBACK_LOG_PATH.
+    dry_run defaults on, mirroring the posting path — pass dry_run=False to
+    actually write. Always needs GITHUB_TOKEN: the reactions endpoints don't
+    serve anonymous callers reliably.
+    """
+    if not _github_token:
+        raise HTTPException(status_code=422,
+                            detail="GITHUB_TOKEN is needed to read reactions")
+    dry_run = req.dry_run
+    repo = f"{req.owner}/{req.repo}"
+    written = not dry_run
+    all_events: list[dict] = []
+
+    def _one(comment_id: int, kind: str,
+             finding: dict | None = None) -> list[dict]:
+        try:
+            return ingest_live(req.owner, req.repo, req.pr_number,
+                               comment_id, kind, _github_token,
+                               _feedback_log_path,
+                               dry_run=dry_run, finding=finding)
+        except PRFetchError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if req.comment_id is not None:
+        all_events = _one(req.comment_id, req.comment_kind)
+    else:
+        # sweep the registry: every comment/review we posted live on this PR
+        for rec in posted_comments_for_pr(_feedback_registry_path,
+                                          repo, req.pr_number):
+            kind = rec.get("kind")
+            if kind == "summary" and rec.get("comment_id"):
+                all_events += _one(rec["comment_id"], "summary")
+            elif kind == "inline_review" and rec.get("review_id"):
+                try:
+                    comments = fetch_review_comments(
+                        req.owner, req.repo, req.pr_number,
+                        rec["review_id"], _github_token)
+                except PRFetchError as exc:
+                    raise HTTPException(status_code=502,
+                                        detail=str(exc)) from exc
+                for c in comments:
+                    # our inline bodies carry the check name in the header —
+                    # that's the per-check signal the noise stats will use
+                    all_events += _one(c["id"], "inline",
+                                       finding_from_inline_body(
+                                           c.get("body") or ""))
+    reply = {"dry_run": dry_run, "events": all_events,
+             "event_count": len(all_events)}
+    if written:
+        reply["log_path"] = _feedback_log_path
+    return reply
+
 # -- demo ui -----------------------------------------------------------------
 # open / in a browser to click through the api instead of curling it.
 import os as _os
@@ -199,6 +278,13 @@ async def github_webhook(request: Request) -> dict:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         reply["review"] = {"finding_count": len(findings),
                            "markdown_preview": markdown[:300]}
+        # live posts are remembered so /feedback/ingest can poll their
+        # reactions later (GitHub never sends webhooks for reactions)
+        if posted.get("posted") and posted.get("comment_id"):
+            record_posted_comment(
+                _feedback_registry_path,
+                {"repo": result["repo"], "pr_number": result["number"],
+                 "kind": "summary", "comment_id": posted["comment_id"]})
         reply["comment"] = {k: v for k, v in posted.items()
                             if k != "payload"}
         if posted.get("dry_run"):
@@ -211,6 +297,12 @@ async def github_webhook(request: Request) -> dict:
             inline_posted = post_review_comments(
                 owner, name, result["number"], inline,
                 dry_run=_webhook_dry_run, token=_github_token)
+            if inline_posted.get("posted") and inline_posted.get("review_id"):
+                record_posted_comment(
+                    _feedback_registry_path,
+                    {"repo": result["repo"], "pr_number": result["number"],
+                     "kind": "inline_review",
+                     "review_id": inline_posted["review_id"]})
             reply["inline_comments"] = {
                 "count": len(inline),
                 "positions": [(c["path"], c["line"]) for c in inline],

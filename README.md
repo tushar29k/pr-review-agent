@@ -247,6 +247,42 @@ is order-of-magnitude. Prices default to small-model list prices per backend
 env overrides; `mock` is $0 by definition, `local` charges a flat per-review
 GPU-time guess. The HTTP service logs too when `REVIEW_LOG_PATH` is set.
 
+## Feedback capture: 👍/👎 reactions
+
+Reactions are the cheapest signal that a comment was useful or noise, so
+`reviewer/feedback.py` ingests them into a JSONL log. GitHub sends **no**
+webhook events for reactions, so this is a polling path — `POST
+/feedback/ingest` fetches the reactions on comments we posted live and
+appends one event per reaction:
+
+```bash
+curl -X POST localhost:8000/feedback/ingest \
+  -H 'content-type: application/json' \
+  -d '{"owner":"psf","repo":"requests","pr_number":7616,"dry_run":false}'
+# → { dry_run: false, event_count: N, log_path: "feedback.jsonl" }
+```
+
+Live posts are remembered in a small registry (`FEEDBACK_REGISTRY_PATH`,
+default `feedback_comments.jsonl`), so the ingest endpoint can sweep
+everything we posted on a PR without a comment id; passing `comment_id`
+(plus `comment_kind`: `summary` or `inline`) targets one comment. Inline
+comment bodies carry the check name in their `**severity** \`check\``
+header, and ingest attaches it to the event — that's the per-check signal
+the noise-stats work will aggregate. Dry-run is the default (nothing
+written, events returned); `GITHUB_TOKEN` is always required since the
+reactions endpoints don't serve anonymous callers reliably. Set
+`FEEDBACK_LOG_PATH` to choose where the JSONL lands (default
+`feedback.jsonl`).
+
+Each event: `timestamp`, `repo`, `pr_number`, `comment_id`,
+`comment_kind` (`summary`|`inline`), `reaction` (GitHub's `+1`/`-1`/`laugh`
+/`confused`/`heart`/`hooray`/`rocket`/`eyes` vocabulary), `sentiment`
+(`positive` for 👍 and its celebratory cousins, `negative` for 👎,
+`neutral` otherwise), `user`, `reacted_at`, and `finding`
+(`{severity, check}`) when known. Offline ingestion is tested end to end
+in `test_feedback.py` — a simulated reactions API list must land in the
+JSONL with the right sentiment and dedupe.
+
 ## Honest notes
 
 - The reviewer backend is a **mock** by default — it fires on a few obvious shapes (bare excepts, big single-file additions) so the pipeline runs offline. Swap in a real model with `reviewer: openai` (`REVIEWER_BACKEND=openai`, `OPENAI_API_KEY` set, `openai` package installed), `reviewer: anthropic` (`REVIEWER_BACKEND=anthropic`, `ANTHROPIC_API_KEY` set, `anthropic` package installed, model via `ANTHROPIC_MODEL`, default `claude-haiku-4-5`), `reviewer: local` (a small HF instruct model, default `Qwen/Qwen2-0.5B-Instruct` via `LOCAL_MODEL`, `transformers`+`torch` installed — no key, no network needed once weights are cached; `LOCAL_OFFLINE=1` forces the cache), or `reviewer: free` — real model judgement over a free HTTPS API (Gemini via Google AI Studio's free tier, no card; or OpenRouter with `LLM_PROVIDER=openrouter` and a `:free` model like `openai/gpt-oss-20b:free`, `LLM_MODEL` to override): no SDK, no weights, no extra deps. With `LLM_API_KEY` set and no explicit `REVIEWER_BACKEND`, `free` is auto-selected — the live Render demo just needs the env var. A failed model call skips that file instead of killing the review. Each file gets a per-file diff prompt with surrounding context and the JSON findings are validated into the same finding schema. Malformed model output never crashes the review. Without a key, the anthropic backend falls back to the mock heuristics instead of failing, so the config always runs.
