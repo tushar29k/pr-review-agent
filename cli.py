@@ -11,6 +11,9 @@ Usage:
         # without --config, .pr-review.yaml is auto-discovered in the cwd
     python cli.py --diff evals/sample_pr.diff --ignore-pattern "docs/*"
         # extra fnmatch patterns, layered on top of the config (or defaults)
+    python cli.py --diff evals/sample_pr.diff --repo tushar29k/pr-review-agent
+        # down-weight checks this repo keeps dismissing, learned from the
+        # feedback JSONL ($FEEDBACK_LOG_PATH or --feedback-log)
 """
 
 import argparse
@@ -18,6 +21,7 @@ import os
 import sys
 
 from reviewer.comments import findings_to_markdown
+from reviewer.downweight import load_noisy_weights
 from reviewer.ignore import effective_patterns
 from reviewer.repo_config import discover_config
 from reviewer.reviewer import Reviewer, make_backend
@@ -39,6 +43,14 @@ def main() -> int:
                     help="extra fnmatch pattern for vendored/generated files "
                          "(repeatable); layered on top of the config patterns "
                          "or the built-in defaults")
+    ap.add_argument("--repo", default=None,
+                    help="owner/repo the diff belongs to — down-weights "
+                         "checks this repo keeps dismissing, learned from "
+                         "the feedback log")
+    ap.add_argument("--feedback-log",
+                    default=os.environ.get("FEEDBACK_LOG_PATH"),
+                    help="feedback JSONL to learn noise weights from "
+                         "(needs --repo; default $FEEDBACK_LOG_PATH)")
     args = ap.parse_args()
 
     try:
@@ -62,9 +74,21 @@ def main() -> int:
         config.ignore_patterns = (effective_patterns(config.ignore_patterns)
                                   + args.ignore_pattern)
 
-    findings, skipped = Reviewer(backend, config=config).review_and_log(
+    noise_weights: dict[str, float] = {}
+    if args.repo:
+        # dismissal history for this repo — a missing/empty log just means
+        # no learning yet, {} leaves the review untouched
+        noise_weights = load_noisy_weights(
+            args.feedback_log or "feedback.jsonl", args.repo)
+        if noise_weights:
+            print(f"noise weights for {args.repo}: "
+                  f"{', '.join(f'{c} ({r:.0%} dismissed)' for c, r in sorted(noise_weights.items()))}",
+                  file=sys.stderr)
+
+    reviewer = Reviewer(backend, config=config, noise_weights=noise_weights)
+    findings, skipped = reviewer.review_and_log(
         diff_text, log_path=args.log, backend=args.reviewer)
-    print(findings_to_markdown(findings, skipped))
+    print(findings_to_markdown(findings, skipped, reviewer.suppressed_last))
     # exit 1 if anything critical turned up — handy for CI gates
     return 1 if any(f["severity"] == "critical" for f in findings) else 0
 

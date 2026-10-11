@@ -16,6 +16,7 @@ from .config import confidence_to_severity
 from .cost import append_record, build_record
 from .dedupe import dedupe_findings, _is_model
 from .diff_parser import FileDiff, parse_diff
+from .downweight import apply_downweight
 from .ignore import effective_patterns, is_ignored
 from .repo_config import RepoConfig
 
@@ -108,11 +109,17 @@ def make_backend(name: str | None = None,
 
 class Reviewer:
     def __init__(self, backend: ReviewBackend | None = None,
-                 config: RepoConfig | None = None):
+                 config: RepoConfig | None = None,
+                 noise_weights: dict[str, float] | None = None):
         self.backend = backend or MockBackend()
         # RepoConfig from .pr-review.yaml: which checks run and whose
         # severity scale the model findings calibrate through
         self.config = config or RepoConfig()
+        # learning loop: {check: dismissal_rate} for noisy checks in the
+        # repo being reviewed — None/{} means no down-weighting
+        self.noise_weights = dict(noise_weights or {})
+        # findings the last review suppressed as noisy-check noise
+        self.suppressed_last: list[dict] = []
 
     def review(self, diff_text: str) -> list[dict]:
         findings, _, _ = self.review_timed(diff_text)
@@ -163,6 +170,10 @@ class Reviewer:
         t = time.perf_counter()
         findings = self._recalibrate(findings)
         findings = dedupe_findings(findings)  # one finding per spot, not per layer
+        # learning loop: soften checks this repo keeps dismissing — info
+        # findings from noisy checks drop out, criticals never fully hide
+        findings, self.suppressed_last = apply_downweight(
+            findings, self.noise_weights)
         stages["dedupe_ms"] = (time.perf_counter() - t) * 1000
         # deterministic order: severity first, then file, then line
         findings.sort(key=lambda d: (

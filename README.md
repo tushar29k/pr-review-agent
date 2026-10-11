@@ -283,6 +283,33 @@ Each event: `timestamp`, `repo`, `pr_number`, `comment_id`,
 in `test_feedback.py` — a simulated reactions API list must land in the
 JSONL with the right sentiment and dedupe.
 
+## Noise down-weighting: the learning loop
+
+Dismissal history feeds back into the review. `reviewer/downweight.py`
+reads the feedback JSONL, finds the checks each repo keeps dismissing
+(the same noisy bar as `reviewer/noise_stats.py`: dismissal rate ≥ 0.5
+on ≥ 3 verdicts), and the `Reviewer` demotes their findings one severity
+level — info findings from a noisy check are suppressed outright.
+Criticals are never suppressed, only softened one notch: a dismissed
+true positive is a false negative you can't afford. Demoted findings
+carry `downweighted: true` and their `dismissal_rate`; the markdown
+comment gets a one-line note so the learning loop is never silent.
+
+It applies automatically in the GitHub App path (the webhook and
+`/review-pr` load the reviewed repo's weights from `FEEDBACK_LOG_PATH`
+before each review), and on the CLI via `--repo`:
+
+```bash
+python cli.py --diff evals/sample_pr.diff --repo tushar29k/pr-review-agent
+python evals/noise_downweight.py   # replay eval: a noisy check must vanish
+```
+
+No feedback log yet, or no noisy checks for the repo, means no weights —
+the review runs exactly as before. Run the replay eval to see it work:
+against the sample feedback the `todos` check (dismissed 75% of the
+time) is suppressed across the 5 sample PRs while every other check's
+findings are byte-identical.
+
 ## Honest notes
 
 - The reviewer backend is a **mock** by default — it fires on a few obvious shapes (bare excepts, big single-file additions) so the pipeline runs offline. Swap in a real model with `reviewer: openai` (`REVIEWER_BACKEND=openai`, `OPENAI_API_KEY` set, `openai` package installed), `reviewer: anthropic` (`REVIEWER_BACKEND=anthropic`, `ANTHROPIC_API_KEY` set, `anthropic` package installed, model via `ANTHROPIC_MODEL`, default `claude-haiku-4-5`), `reviewer: local` (a small HF instruct model, default `Qwen/Qwen2-0.5B-Instruct` via `LOCAL_MODEL`, `transformers`+`torch` installed — no key, no network needed once weights are cached; `LOCAL_OFFLINE=1` forces the cache), or `reviewer: free` — real model judgement over a free HTTPS API (Gemini via Google AI Studio's free tier, no card; or OpenRouter with `LLM_PROVIDER=openrouter` and a `:free` model like `openai/gpt-oss-20b:free`, `LLM_MODEL` to override): no SDK, no weights, no extra deps. With `LLM_API_KEY` set and no explicit `REVIEWER_BACKEND`, `free` is auto-selected — the live Render demo just needs the env var. A failed model call skips that file instead of killing the review. Each file gets a per-file diff prompt with surrounding context and the JSON findings are validated into the same finding schema. Malformed model output never crashes the review. Without a key, the anthropic backend falls back to the mock heuristics instead of failing, so the config always runs.

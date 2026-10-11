@@ -13,6 +13,7 @@ import json
 import os
 
 from reviewer.comments import findings_to_markdown
+from reviewer.downweight import load_noisy_weights
 from reviewer.feedback import (fetch_review_comments,
                                finding_from_inline_body, ingest_live,
                                posted_comments_for_pr, record_posted_comment)
@@ -82,6 +83,13 @@ class PRReviewResponse(ReviewResponse):
     pr: PRMeta
 
 
+def _noise_weights(repo: str) -> dict[str, float]:
+    # dismissal history for this repo: {check: dismissal_rate} for the
+    # noisy ones. A missing/empty feedback log just means no learning
+    # yet — {} leaves the review untouched, never an error.
+    return load_noisy_weights(_feedback_log_path, repo)
+
+
 def _reviewer_for_repo_config(owner: str, repo: str,
                               head_sha: str | None) -> Reviewer:
     # the PR's own .pr-review.yaml tunes the review; missing file or any
@@ -89,14 +97,16 @@ def _reviewer_for_repo_config(owner: str, repo: str,
     cfg_text = fetch_repo_config(owner, repo, ref=head_sha)
     config = parse_config_text(cfg_text) if cfg_text and cfg_text.strip() \
         else RepoConfig()
-    return Reviewer(_reviewer.backend, config=config)
+    return Reviewer(_reviewer.backend, config=config,
+                    noise_weights=_noise_weights(f"{owner}/{repo}"))
 
 
 @app.post("/review", response_model=ReviewResponse)
 def review(req: ReviewRequest) -> ReviewResponse:
     findings, skipped = _reviewer.review_and_log(req.diff, log_path=_log_path)
     return ReviewResponse(
-        markdown=findings_to_markdown(findings, skipped),
+        markdown=findings_to_markdown(findings, skipped,
+                                      _reviewer.suppressed_last),
         finding_count=len(findings),
         has_critical=any(f["severity"] == "critical" for f in findings),
         findings=findings,
@@ -144,10 +154,11 @@ def review_pr(req: PRReviewRequest) -> PRReviewResponse:
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     head_sha = meta.pop("head_sha", None)  # fetch helper detail, not a PRMeta field
 
-    findings, skipped = _reviewer_for_repo_config(
-        owner, repo, head_sha).review_and_log(diff_text, log_path=_log_path)
+    reviewer = _reviewer_for_repo_config(owner, repo, head_sha)
+    findings, skipped = reviewer.review_and_log(diff_text, log_path=_log_path)
     return PRReviewResponse(
-        markdown=findings_to_markdown(findings, skipped),
+        markdown=findings_to_markdown(findings, skipped,
+                                      reviewer.suppressed_last),
         finding_count=len(findings),
         has_critical=any(f["severity"] == "critical" for f in findings),
         findings=findings,
@@ -268,9 +279,11 @@ async def github_webhook(request: Request) -> dict:
         # same review pipeline as /review, then post it back on the PR
         owner, name = result["repo"].split("/", 1)
         cfg = result.get("repo_config") or RepoConfig()
-        reviewer = Reviewer(_reviewer.backend, config=cfg)
+        reviewer = Reviewer(_reviewer.backend, config=cfg,
+                            noise_weights=_noise_weights(result["repo"]))
         findings, skipped = reviewer.review_and_log(diff, log_path=_log_path)
-        markdown = findings_to_markdown(findings, skipped)
+        markdown = findings_to_markdown(findings, skipped,
+                                        reviewer.suppressed_last)
         try:
             posted = post_comment(owner, name, result["number"], markdown,
                                   dry_run=_webhook_dry_run, token=_github_token)
