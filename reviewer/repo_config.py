@@ -41,7 +41,7 @@ CONFIG_FILENAME = ".pr-review.yaml"
 # every check name a config may enable/disable
 KNOWN_CHECKS = frozenset({
     "secrets", "debug_leftovers", "todos", "binary",
-    "diff_size", "missing_tests", "llm",
+    "diff_size", "missing_tests", "unused_imports", "dead_code", "llm",
 })
 
 

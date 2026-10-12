@@ -113,6 +113,8 @@ enabled_checks:        # only these checks run; anything else is skipped
   - binary
   - diff_size
   - missing_tests
+  - unused_imports       # tree-sitter: imported names never referenced (new .py files)
+  - dead_code            # tree-sitter: unreachable code after return/raise (Python)
   - llm                # the model pass (all backends)
 severity_thresholds:   # remap model confidences; deterministic checks
   critical: 0.90       # keep their fixed severities regardless

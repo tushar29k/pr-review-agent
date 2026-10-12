@@ -43,3 +43,25 @@ diff --git a/README.md b/README.md
 +More docs here.
 -Old line.
 +Updated line.
+diff --git a/report_utils.py b/report_utils.py
+new file mode 100644
+--- /dev/null
++++ b/report_utils.py
+@@ -0,0 +1,17 @@
++import json  # planted 2026-10-12: unused import (tree-sitter fixture)
++import re  # used below — control case, must NOT be flagged
++
++STATUSES = {"ok", "failed"}
++
++
++def summarize(text):
++    m = re.search(r"status=(\w+)", text)
++    if not m:
++        return "unknown"
++    return m.group(1).upper()
++    log_line = "done: " + text  # planted 2026-10-12: dead code after return
++    return log_line  # planted 2026-10-12: dead code after return
++
++
++def unused_helper():
++    return None

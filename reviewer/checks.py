@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from .diff_parser import FileDiff
+from . import tree_sitter_checks
 
 # (name, pattern) — kept deliberately small; extend as you learn new shapes.
 SECRET_PATTERNS = [
@@ -128,7 +129,9 @@ def run_all(files: list[FileDiff],
     per_file = (("secrets", check_secrets),
                 ("debug_leftovers", check_debug_leftovers),
                 ("todos", check_todos),
-                ("binary", check_binary))
+                ("binary", check_binary),
+                ("unused_imports", tree_sitter_checks.check_unused_imports),
+                ("dead_code", tree_sitter_checks.check_dead_code))
     for f in files:
         for name, fn in per_file:
             if enabled_checks is None or name in enabled_checks:
