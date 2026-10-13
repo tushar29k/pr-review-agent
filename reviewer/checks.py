@@ -122,16 +122,23 @@ def check_tests_for_new_files(files: list[FileDiff]) -> list[dict]:
 
 
 def run_all(files: list[FileDiff],
-            enabled_checks: frozenset[str] | None = None) -> list[dict]:
+            enabled_checks: frozenset[str] | None = None,
+            complexity_limits: tuple[int, int] | None = None) -> list[dict]:
     """Run the deterministic checks. enabled_checks (from .pr-review.yaml)
-    lists the check names that run — anything else is skipped; None runs all."""
+    lists the check names that run — anything else is skipped; None runs all.
+    complexity_limits is (max_function_lines, max_nesting_depth); None uses
+    the config.py defaults (and their env-var overrides)."""
     findings: list[dict] = []
+    clines, cdepth = (complexity_limits if complexity_limits is not None
+                      else (None, None))
     per_file = (("secrets", check_secrets),
                 ("debug_leftovers", check_debug_leftovers),
                 ("todos", check_todos),
                 ("binary", check_binary),
                 ("unused_imports", tree_sitter_checks.check_unused_imports),
-                ("dead_code", tree_sitter_checks.check_dead_code))
+                ("dead_code", tree_sitter_checks.check_dead_code),
+                ("complexity", lambda f: tree_sitter_checks.check_complexity(
+                    f, max_lines=clines, max_depth=cdepth)))
     for f in files:
         for name, fn in per_file:
             if enabled_checks is None or name in enabled_checks:

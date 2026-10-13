@@ -21,8 +21,26 @@ def _threshold(env: str, default: float) -> float:
     return min(1.0, max(0.0, v))
 
 
+def _count(env: str, default: int) -> int:
+    # same idea for whole-number knobs — garbage falls back to default
+    try:
+        v = int(os.environ.get(env, default))
+    except (TypeError, ValueError):
+        v = default
+    return max(1, v)
+
+
 SEVERITY_CRITICAL: float = _threshold("SEVERITY_CRITICAL", 0.80)
 SEVERITY_WARNING: float = _threshold("SEVERITY_WARNING", 0.50)
+
+# complexity-smell limits (used by the tree-sitter complexity check; a
+# repo's .pr-review.yaml can override both under `complexity:`):
+# 50 lines because a function you can't see whole on one screen makes
+# reviewers scroll-and-forget; 3 nesting levels because the fourth
+# `if` inside `for` inside `while` inside `if` is where humans start
+# losing track of which branch they're in.
+MAX_FUNCTION_LINES: int = _count("COMPLEXITY_MAX_LINES", 50)
+MAX_NESTING_DEPTH: int = _count("COMPLEXITY_MAX_DEPTH", 3)
 
 # evaluated in order: confidence >= critical becomes critical,
 # >= warning becomes warning, anything below is info.

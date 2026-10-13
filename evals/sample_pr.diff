@@ -47,7 +47,7 @@ diff --git a/report_utils.py b/report_utils.py
 new file mode 100644
 --- /dev/null
 +++ b/report_utils.py
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,87 @@
 +import json  # planted 2026-10-12: unused import (tree-sitter fixture)
 +import re  # used below — control case, must NOT be flagged
 +
@@ -65,3 +65,73 @@ new file mode 100644
 +
 +def unused_helper():
 +    return None
++
++
++def process_report(rows):  # planted 2026-10-13: long function (complexity fixture)
++    out = []
++    for row in rows:
++        if not row.get("status"):
++            continue
++        status = row["status"].strip().lower()
++        if status not in STATUSES:
++            status = "unknown"
++        label = summarize(row.get("text", ""))
++        entry = {"status": status, "label": label}
++        if row.get("retries", 0) > 3:
++            entry["flaky"] = True
++        if row.get("duration_ms", 0) > 5000:
++            entry["slow"] = True
++        tags = row.get("tags") or []
++        entry["tags"] = [t for t in tags if t]
++        if "prod" in tags:
++            entry["env"] = "prod"
++        elif "staging" in tags:
++            entry["env"] = "staging"
++        else:
++            entry["env"] = "dev"
++        note = row.get("note", "")
++        if len(note) > 200:
++            entry["note"] = note[:200] + "..."
++        elif note:
++            entry["note"] = note
++        else:
++            entry["note"] = ""
++        entry["owner"] = row.get("owner", "unassigned")
++        entry["attempt"] = row.get("attempt", 1)
++        if entry["attempt"] > 1:
++            entry["retried"] = True
++        ts = row.get("ts")
++        entry["ts"] = ts if ts else "n/a"
++        if row.get("critical"):
++            entry["priority"] = "p0"
++        elif row.get("blocked"):
++            entry["priority"] = "p1"
++        else:
++            entry["priority"] = "p2"
++        meta = {}
++        for k in ("region", "az", "host"):
++            if k in row:
++                meta[k] = row[k]
++        entry["meta"] = meta
++        score = 0
++        if entry["priority"] == "p0":
++            score += 10
++        if entry.get("slow"):
++            score += 5
++        if entry.get("flaky"):
++            score += 5
++        entry["score"] = score
++        out.append(entry)
++    out.sort(key=lambda e: e["score"], reverse=True)
++    return out
++
++
++def validate_deep(payload):  # planted 2026-10-13: deep nesting (complexity fixture)
++    if payload:
++        for item in payload:
++            nxt = item.get("next")
++            while nxt:
++                if nxt.get("ok"):
++                    return True
++                nxt = nxt.get("next")
++    return False

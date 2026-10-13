@@ -115,10 +115,14 @@ enabled_checks:        # only these checks run; anything else is skipped
   - missing_tests
   - unused_imports       # tree-sitter: imported names never referenced (new .py files)
   - dead_code            # tree-sitter: unreachable code after return/raise (Python)
+  - complexity           # tree-sitter: long functions + deep nesting (new .py files)
   - llm                # the model pass (all backends)
 severity_thresholds:   # remap model confidences; deterministic checks
   critical: 0.90       # keep their fixed severities regardless
   warning: 0.60
+complexity:            # smell limits for the tree-sitter complexity check
+  max_function_lines: 40   # flag functions longer than this (default 50)
+  max_nesting_depth: 2     # flag nesting deeper than this (default 3)
 ignore:                # fnmatch patterns for vendored/generated files
   - vendor/*           # skipped files are named in the review output,
   - "*.min.js"         # never silently dropped; replaces the built-in
@@ -183,9 +187,12 @@ reviewer/
   diff_parser.py   parse unified diffs into FileDiff structures
   checks.py        deterministic checks (secrets, debug, TODOs, size, tests)
   ignore.py        vendored/generated file ignore patterns + marker sniffing
-  config.py        severity calibration: confidence → critical/warning/info
+  config.py        severity calibration: confidence → critical/warning/info;
+                   complexity-smell limits (MAX_FUNCTION_LINES=50,
+                   MAX_NESTING_DEPTH=3, env-overridable)
   repo_config.py   .pr-review.yaml loader: enabled_checks, severity_thresholds,
-                   ignore patterns (vendor/*, *.min.js, lockfiles, …)
+                   complexity limits, ignore patterns (vendor/*, *.min.js,
+                   lockfiles, …)
   prompts.py       versioned reviewer prompts (REVIEWER_PROMPT_VERSION, default v1)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   cost.py          per-review cost/latency logging to JSONL (token + price table)

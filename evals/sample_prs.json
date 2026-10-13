@@ -63,6 +63,18 @@
           "file": "report_utils.py",
           "line": 13,
           "note": "planted dead return after return (tree-sitter fixture, 2026-10-12)"
+        },
+        {
+          "check": "complexity",
+          "file": "report_utils.py",
+          "line": 20,
+          "note": "planted long function, 56 body lines (complexity fixture, 2026-10-13)"
+        },
+        {
+          "check": "complexity",
+          "file": "report_utils.py",
+          "line": 79,
+          "note": "planted deep nesting, 4 levels (complexity fixture, 2026-10-13)"
         }
       ],
       "id": "pr1",

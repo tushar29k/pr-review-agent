@@ -41,7 +41,7 @@ CONFIG_FILENAME = ".pr-review.yaml"
 # every check name a config may enable/disable
 KNOWN_CHECKS = frozenset({
     "secrets", "debug_leftovers", "todos", "binary",
-    "diff_size", "missing_tests", "unused_imports", "dead_code", "llm",
+    "diff_size", "missing_tests", "unused_imports", "dead_code", "complexity", "llm",
 })
 
 
@@ -53,12 +53,24 @@ class RepoConfig:
     critical_threshold: float | None = None
     warning_threshold: float | None = None
     ignore_patterns: list[str] | None = None
+    complexity_lines: int | None = None
+    complexity_depth: int | None = None
 
     def check_enabled(self, name: str) -> bool:
         return self.enabled_checks is None or name in self.enabled_checks
 
     def thresholds(self) -> tuple[float | None, float | None]:
         return self.critical_threshold, self.warning_threshold
+
+    def complexity_limits(self) -> tuple[int, int]:
+        # repo's .pr-review.yaml overrides win; config.py holds the
+        # defaults (and their env-var overrides)
+        from .config import MAX_FUNCTION_LINES, MAX_NESTING_DEPTH
+        lines = (self.complexity_lines if self.complexity_lines is not None
+                 else MAX_FUNCTION_LINES)
+        depth = (self.complexity_depth if self.complexity_depth is not None
+                 else MAX_NESTING_DEPTH)
+        return lines, depth
 
 
 def _clamp01(value: str, where: str) -> float | None:
@@ -73,14 +85,15 @@ def _clamp01(value: str, where: str) -> float | None:
 
 
 def parse_config_text(text: str) -> RepoConfig:
-    """Parse just the three shapes we support: string lists under
-    enabled_checks and ignore, and a float mapping under
-    severity_thresholds. Anything else is ignored — a config file must
-    never crash a review."""
+    """Parse just the shapes we support: string lists under
+    enabled_checks and ignore, float mappings under severity_thresholds,
+    and int mappings under complexity. Anything else is ignored — a
+    config file must never crash a review."""
     enabled: list[str] = []
     ignore: list[str] = []
     saw_ignore = False
     thresholds: dict[str, float] = {}
+    complexity: dict[str, int] = {}
     section: str | None = None
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].rstrip()  # comments and blank lines
@@ -93,6 +106,8 @@ def parse_config_text(text: str) -> RepoConfig:
                 section = "enabled"
             elif stripped == "severity_thresholds" and line.rstrip().endswith(":"):
                 section = "thresholds"
+            elif stripped == "complexity" and line.rstrip().endswith(":"):
+                section = "complexity"
             elif stripped == "ignore" and line.rstrip().endswith(":"):
                 section = "ignore"
                 saw_ignore = True  # an empty list means "ignore nothing"
@@ -108,6 +123,15 @@ def parse_config_text(text: str) -> RepoConfig:
                 v = _clamp01(val, key)
                 if v is not None:
                     thresholds[key] = v
+        elif section == "complexity" and ":" in line:
+            key, _, val = line.strip().partition(":")
+            key, val = key.strip(), val.strip().strip("\"'")
+            if key in ("max_function_lines", "max_nesting_depth"):
+                try:
+                    complexity[key] = max(1, int(val))
+                except (TypeError, ValueError):
+                    print(f".pr-review.yaml: ignoring bad complexity "
+                          f"{key}: {val!r}", file=sys.stderr)
     enabled_checks = None
     if enabled:
         unknown = [c for c in enabled if c not in KNOWN_CHECKS]
@@ -120,6 +144,8 @@ def parse_config_text(text: str) -> RepoConfig:
         critical_threshold=thresholds.get("critical"),
         warning_threshold=thresholds.get("warning"),
         ignore_patterns=ignore if saw_ignore else None,
+        complexity_lines=complexity.get("max_function_lines"),
+        complexity_depth=complexity.get("max_nesting_depth"),
     )
 
 

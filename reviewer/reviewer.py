@@ -157,7 +157,8 @@ class Reviewer:
         stages = {"parse_ms": (time.perf_counter() - t) * 1000}
 
         t = time.perf_counter()
-        findings = checks.run_all(files, self.config.enabled_checks)
+        findings = checks.run_all(files, self.config.enabled_checks,
+                                  self.config.complexity_limits())
         stages["checks_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()

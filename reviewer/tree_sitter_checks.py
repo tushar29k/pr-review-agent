@@ -1,10 +1,12 @@
-"""Tree-sitter static checks for Python diffs: unused imports, dead code.
+"""Tree-sitter static checks for Python diffs: unused imports, dead code,
+complexity smells.
 
 Regexes can't see structure — tree-sitter can, so an import is "used" only
-when its bound name actually appears as a reference, and "dead" means a
-statement sitting after a return inside the same block. stdlib ast would do
-for whole files, but a diff only shows fragments; tree-sitter's error
-tolerance means a hunk still parses instead of raising.
+when its bound name actually appears as a reference, "dead" means a
+statement sitting after a return inside the same block, and "complex" means
+a function whose body is too long or nests too deep to hold in your head.
+stdlib ast would do for whole files, but a diff only shows fragments;
+tree-sitter's error tolerance means a hunk still parses instead of raising.
 
 Honest scoping, because a diff isn't the whole file:
 - unused imports run only on new files — on a modified file the import
@@ -14,6 +16,9 @@ Honest scoping, because a diff isn't the whole file:
   terminator and the dead statement must both be added lines with no hidden
   lines between them, so dropped context between hunks can't fake the
   block structure.
+- complexity runs only on new files too — a function's full body has to
+  be visible to measure its length; on a modified file it could start
+  outside the hunks, and half a function tells you nothing.
 """
 
 from __future__ import annotations
@@ -30,6 +35,10 @@ except ImportError:  # pragma: no cover — dev installs carry tree-sitter
 _TERMINATORS = {"return_statement", "raise_statement",
                 "continue_statement", "break_statement"}
 _CONTAINERS = {"module", "block"}  # statement sequences live directly under these
+# statements that open a new nesting level for everything inside them
+_NESTERS = {"if_statement", "for_statement", "while_statement",
+            "try_statement", "with_statement", "function_definition",
+            "class_definition", "match_statement"}
 
 
 def _parser():
@@ -167,6 +176,73 @@ def _dead(f: FileDiff, line: int, terminator: str) -> dict:
         "message": f"Unreachable code after `{kind}` — it never "
                    "runs. Delete it or move it above.",
     }
+
+
+def _nest_depth(node, current):
+    # deepest statement nesting under node — each control statement
+    # adds one level for everything inside it. flat function = 0.
+    deepest = current
+    for child in node.children:
+        if child.type in _NESTERS:
+            deepest = max(deepest, _nest_depth(child, current + 1))
+        else:
+            deepest = max(deepest, _nest_depth(child, current))
+    return deepest
+
+
+def check_complexity(f: FileDiff, max_lines=None,
+                     max_depth=None) -> list[dict]:
+    """Long functions and deep nesting in new Python files.
+
+    Same honest scoping as unused imports: new files only. A function's
+    full body has to be visible to measure its length — on a modified
+    file the body could start outside the hunks, and we refuse to guess
+    at half a function. Length counts the body block's line span;
+    depth counts nested control statements around the deepest statement.
+    """
+    if not f.path.endswith(".py"):
+        return []
+    if not f.is_new:
+        return []  # half a function tells you nothing — don't guess
+    if max_lines is None or max_depth is None:
+        from .config import MAX_FUNCTION_LINES, MAX_NESTING_DEPTH
+        max_lines = MAX_FUNCTION_LINES if max_lines is None else max_lines
+        max_depth = MAX_NESTING_DEPTH if max_depth is None else max_depth
+    p = _parser()
+    if p is None:
+        return []  # tree-sitter unavailable: stay silent, never half-check
+    rows = _view(f)
+    tree = p.parse("\n".join(r[3] for r in rows).encode("utf8"))
+
+    out = []
+    for node in _walk(tree.root_node):
+        if node.type != "function_definition":
+            continue
+        body = node.child_by_field_name("body")
+        if body is None or body.type != "block":
+            continue  # one-liner def — can't be long by construction
+        name = node.child_by_field_name("name").text.decode("utf8",
+                                                             "ignore")
+        line = rows[node.start_point[0]][0]
+        lines = body.end_point[0] - body.start_point[0] + 1
+        depth = _nest_depth(node, 0)
+        if lines > max_lines:
+            out.append({
+                "severity": "info", "file": f.path, "line": line,
+                "check": "complexity", "confidence": 1.0,
+                "message": f"Long function: `{name}` spans {lines} lines "
+                           f"(limit {max_lines}) — it won't fit on one "
+                           "screen. Extract a helper or two.",
+            })
+        if depth > max_depth:
+            out.append({
+                "severity": "info", "file": f.path, "line": line,
+                "check": "complexity", "confidence": 1.0,
+                "message": f"Deep nesting: `{name}` nests {depth} levels "
+                           f"(limit {max_depth}) — flatten with early "
+                           "returns or pull the inner loop out.",
+            })
+    return out
 
 
 def check_dead_code(f: FileDiff) -> list[dict]:
