@@ -41,7 +41,7 @@ CONFIG_FILENAME = ".pr-review.yaml"
 # every check name a config may enable/disable
 KNOWN_CHECKS = frozenset({
     "secrets", "debug_leftovers", "todos", "binary",
-    "diff_size", "missing_tests", "unused_imports", "dead_code", "complexity", "llm",
+    "diff_size", "missing_tests", "unused_imports", "dead_code", "complexity", "history", "llm",
 })
 
 
@@ -55,6 +55,7 @@ class RepoConfig:
     ignore_patterns: list[str] | None = None
     complexity_lines: int | None = None
     complexity_depth: int | None = None
+    history_min_fixes: int | None = None
 
     def check_enabled(self, name: str) -> bool:
         return self.enabled_checks is None or name in self.enabled_checks
@@ -72,6 +73,13 @@ class RepoConfig:
                  else MAX_NESTING_DEPTH)
         return lines, depth
 
+    def history_threshold(self) -> int:
+        # same layering as complexity: repo config wins, config.py default
+        # (with its env-var override) otherwise
+        from .config import HISTORY_MIN_FIXES
+        return (self.history_min_fixes if self.history_min_fixes is not None
+                else HISTORY_MIN_FIXES)
+
 
 def _clamp01(value: str, where: str) -> float | None:
     # garbage threshold values shouldn't kill a review — skip the line
@@ -87,13 +95,14 @@ def _clamp01(value: str, where: str) -> float | None:
 def parse_config_text(text: str) -> RepoConfig:
     """Parse just the shapes we support: string lists under
     enabled_checks and ignore, float mappings under severity_thresholds,
-    and int mappings under complexity. Anything else is ignored — a
-    config file must never crash a review."""
+    and int mappings under complexity and history. Anything else is
+    ignored — a config file must never crash a review. """
     enabled: list[str] = []
     ignore: list[str] = []
     saw_ignore = False
     thresholds: dict[str, float] = {}
     complexity: dict[str, int] = {}
+    history: dict[str, int] = {}
     section: str | None = None
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].rstrip()  # comments and blank lines
@@ -108,6 +117,8 @@ def parse_config_text(text: str) -> RepoConfig:
                 section = "thresholds"
             elif stripped == "complexity" and line.rstrip().endswith(":"):
                 section = "complexity"
+            elif stripped == "history" and line.rstrip().endswith(":"):
+                section = "history"
             elif stripped == "ignore" and line.rstrip().endswith(":"):
                 section = "ignore"
                 saw_ignore = True  # an empty list means "ignore nothing"
@@ -132,6 +143,15 @@ def parse_config_text(text: str) -> RepoConfig:
                 except (TypeError, ValueError):
                     print(f".pr-review.yaml: ignoring bad complexity "
                           f"{key}: {val!r}", file=sys.stderr)
+        elif section == "history" and ":" in line:
+            key, _, val = line.strip().partition(":")
+            key, val = key.strip(), val.strip().strip("\"'")
+            if key == "min_fixes":
+                try:
+                    history[key] = max(1, int(val))
+                except (TypeError, ValueError):
+                    print(f".pr-review.yaml: ignoring bad history "
+                          f"{key}: {val!r}", file=sys.stderr)
     enabled_checks = None
     if enabled:
         unknown = [c for c in enabled if c not in KNOWN_CHECKS]
@@ -146,6 +166,7 @@ def parse_config_text(text: str) -> RepoConfig:
         ignore_patterns=ignore if saw_ignore else None,
         complexity_lines=complexity.get("max_function_lines"),
         complexity_depth=complexity.get("max_nesting_depth"),
+        history_min_fixes=history.get("min_fixes"),
     )
 
 

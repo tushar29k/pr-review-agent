@@ -22,9 +22,23 @@ import sys
 
 from reviewer.comments import findings_to_markdown
 from reviewer.downweight import load_noisy_weights
+from reviewer.history import hotspots, mine_git_log
 from reviewer.ignore import effective_patterns
 from reviewer.repo_config import discover_config
 from reviewer.reviewer import Reviewer, make_backend
+
+
+def _hotspots_for(repo_dir, config):
+    # mine the checkout's git log for bug-fix hotspots; a non-repo (or no
+    # --repo-dir at all) just means the history check stays quiet
+    if not repo_dir:
+        return None
+    fix_counts = mine_git_log(repo_dir)
+    hs = hotspots(fix_counts, config.history_threshold())
+    if hs:
+        print(f"history: {len(hs)} hotspot file(s) mined from git log",
+              file=sys.stderr)
+    return hs or None
 
 
 def main() -> int:
@@ -47,6 +61,10 @@ def main() -> int:
                     help="owner/repo the diff belongs to — down-weights "
                          "checks this repo keeps dismissing, learned from "
                          "the feedback log")
+    ap.add_argument("--repo-dir", default=None,
+                    help="local checkout of the repo the diff belongs to — "
+                         "mines its git log so the history check can flag "
+                         "files that break often")
     ap.add_argument("--feedback-log",
                     default=os.environ.get("FEEDBACK_LOG_PATH"),
                     help="feedback JSONL to learn noise weights from "
@@ -85,7 +103,8 @@ def main() -> int:
                   f"{', '.join(f'{c} ({r:.0%} dismissed)' for c, r in sorted(noise_weights.items()))}",
                   file=sys.stderr)
 
-    reviewer = Reviewer(backend, config=config, noise_weights=noise_weights)
+    reviewer = Reviewer(backend, config=config, noise_weights=noise_weights,
+                        hotspots=_hotspots_for(args.repo_dir, config))
     findings, skipped = reviewer.review_and_log(
         diff_text, log_path=args.log, backend=args.reviewer)
     print(findings_to_markdown(findings, skipped, reviewer.suppressed_last))

@@ -121,13 +121,31 @@ def check_tests_for_new_files(files: list[FileDiff]) -> list[dict]:
     return out
 
 
+def check_hotspots(f: FileDiff,
+                   hotspots: dict[str, int] | None) -> list[dict]:
+    """Flag files the git history says break often. Info-level — this is
+    a nudge to look twice, not an accusation; the history knows the file
+    needed fixing, not that this change is wrong."""
+    if not hotspots or f.path not in hotspots:
+        return []
+    n = hotspots[f.path]
+    return [_finding(
+        "info", f.path, None, "history",
+        f"Historically buggy file: {n} bug-fix commits touched it in the "
+        "mined history. Worth an extra look at edge cases and regression "
+        "tests before merging.")]
+
+
 def run_all(files: list[FileDiff],
             enabled_checks: frozenset[str] | None = None,
-            complexity_limits: tuple[int, int] | None = None) -> list[dict]:
+            complexity_limits: tuple[int, int] | None = None,
+            hotspots: dict[str, int] | None = None) -> list[dict]:
     """Run the deterministic checks. enabled_checks (from .pr-review.yaml)
     lists the check names that run — anything else is skipped; None runs all.
     complexity_limits is (max_function_lines, max_nesting_depth); None uses
-    the config.py defaults (and their env-var overrides)."""
+    the config.py defaults (and their env-var overrides).
+    hotspots is {path: fix_count} from reviewer/history.py — None means no
+    git history was mined, and the history check stays quiet."""
     findings: list[dict] = []
     clines, cdepth = (complexity_limits if complexity_limits is not None
                       else (None, None))
@@ -138,7 +156,8 @@ def run_all(files: list[FileDiff],
                 ("unused_imports", tree_sitter_checks.check_unused_imports),
                 ("dead_code", tree_sitter_checks.check_dead_code),
                 ("complexity", lambda f: tree_sitter_checks.check_complexity(
-                    f, max_lines=clines, max_depth=cdepth)))
+                    f, max_lines=clines, max_depth=cdepth)),
+                ("history", lambda f: check_hotspots(f, hotspots)))
     for f in files:
         for name, fn in per_file:
             if enabled_checks is None or name in enabled_checks:

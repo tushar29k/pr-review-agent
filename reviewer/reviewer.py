@@ -110,7 +110,8 @@ def make_backend(name: str | None = None,
 class Reviewer:
     def __init__(self, backend: ReviewBackend | None = None,
                  config: RepoConfig | None = None,
-                 noise_weights: dict[str, float] | None = None):
+                 noise_weights: dict[str, float] | None = None,
+                 hotspots: dict[str, int] | None = None):
         self.backend = backend or MockBackend()
         # RepoConfig from .pr-review.yaml: which checks run and whose
         # severity scale the model findings calibrate through
@@ -120,6 +121,9 @@ class Reviewer:
         self.noise_weights = dict(noise_weights or {})
         # findings the last review suppressed as noisy-check noise
         self.suppressed_last: list[dict] = []
+        # {path: bug-fix count} from reviewer/history.py — None means no
+        # git history was mined, so the history check stays quiet
+        self.hotspots = hotspots
 
     def review(self, diff_text: str) -> list[dict]:
         findings, _, _ = self.review_timed(diff_text)
@@ -158,7 +162,8 @@ class Reviewer:
 
         t = time.perf_counter()
         findings = checks.run_all(files, self.config.enabled_checks,
-                                  self.config.complexity_limits())
+                                  self.config.complexity_limits(),
+                                  self.hotspots)
         stages["checks_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()

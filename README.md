@@ -116,6 +116,7 @@ enabled_checks:        # only these checks run; anything else is skipped
   - unused_imports       # tree-sitter: imported names never referenced (new .py files)
   - dead_code            # tree-sitter: unreachable code after return/raise (Python)
   - complexity           # tree-sitter: long functions + deep nesting (new .py files)
+  - history              # git log: files that break often get an extra-look note
   - llm                # the model pass (all backends)
 severity_thresholds:   # remap model confidences; deterministic checks
   critical: 0.90       # keep their fixed severities regardless
@@ -123,6 +124,8 @@ severity_thresholds:   # remap model confidences; deterministic checks
 complexity:            # smell limits for the tree-sitter complexity check
   max_function_lines: 40   # flag functions longer than this (default 50)
   max_nesting_depth: 2     # flag nesting deeper than this (default 3)
+history:               # tuning for the history-aware check
+  min_fixes: 5          # flag files with this many bug-fix commits (default 3)
 ignore:                # fnmatch patterns for vendored/generated files
   - vendor/*           # skipped files are named in the review output,
   - "*.min.js"         # never silently dropped; replaces the built-in
@@ -189,17 +192,20 @@ reviewer/
   ignore.py        vendored/generated file ignore patterns + marker sniffing
   config.py        severity calibration: confidence → critical/warning/info;
                    complexity-smell limits (MAX_FUNCTION_LINES=50,
-                   MAX_NESTING_DEPTH=3, env-overridable)
+                   MAX_NESTING_DEPTH=3, env-overridable); history threshold
+                   (HISTORY_MIN_FIXES=3, env-overridable)
+  history.py       mine git log for bug-fix commits per file; hotspot filter
   repo_config.py   .pr-review.yaml loader: enabled_checks, severity_thresholds,
-                   complexity limits, ignore patterns (vendor/*, *.min.js,
-                   lockfiles, …)
+                   complexity limits, history tuning, ignore patterns
+                   (vendor/*, *.min.js, lockfiles, …)
   prompts.py       versioned reviewer prompts (REVIEWER_PROMPT_VERSION, default v1)
   reviewer.py      Reviewer orchestrator + ReviewBackend interface + MockBackend
   cost.py          per-review cost/latency logging to JSONL (token + price table)
   comments.py      render findings as a markdown PR comment
   github.py        parse PR links + fetch diffs and .pr-review.yaml (stdlib only)
 cli.py             CLI: review a diff file, exit 1 on critical findings
-                   (--config for an explicit .pr-review.yaml; cwd auto-discovered)
+                   (--config for an explicit .pr-review.yaml; cwd auto-discovered;
+                   --repo-dir mines the repo's git log for the history check)
 service.py         FastAPI service: POST /review, POST /review-pr, GET /health
 prompts/
   v1/              the original reviewer prompt (system.txt + user.txt)

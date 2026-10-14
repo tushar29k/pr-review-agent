@@ -33,6 +33,11 @@ def _count(env: str, default: int) -> int:
 SEVERITY_CRITICAL: float = _threshold("SEVERITY_CRITICAL", 0.80)
 SEVERITY_WARNING: float = _threshold("SEVERITY_WARNING", 0.50)
 
+# history-aware check (reviewer/history.py): how many bug-fix commits a
+# file needs before it counts as "breaks often". 3 because one fix is
+# noise, two is coincidence, three is a pattern worth flagging.
+HISTORY_MIN_FIXES: int = _count("HISTORY_MIN_FIXES", 3)
+
 # complexity-smell limits (used by the tree-sitter complexity check; a
 # repo's .pr-review.yaml can override both under `complexity:`):
 # 50 lines because a function you can't see whole on one screen makes
