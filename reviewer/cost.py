@@ -33,6 +33,12 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# hard per-review latency budget for time-to-first-review, ms;
+# override with REVIEW_SLO_MS when the on-call bar moves
+def slo_ms() -> float:
+    return _env_float("REVIEW_SLO_MS", 30000.0)
+
+
 def price_for(backend: str) -> tuple[float, float, float]:
     """(input $/1M, output $/1M, flat $/review) for a backend name."""
     key = (backend or "mock").strip().lower()
@@ -66,6 +72,8 @@ def build_record(diff_text: str, findings: list, stages: dict,
     files = parse_diff(diff_text)
     in_tokens = estimate_tokens(diff_text)
     out_tokens = estimate_tokens(json.dumps(findings))
+    budget = slo_ms()
+    first_ms = stages.get("first_review_ms")
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "backend": backend,
@@ -76,6 +84,10 @@ def build_record(diff_text: str, findings: list, stages: dict,
         "findings_total": len(findings),
         "findings_by_severity": counts,
         "latency_ms": {k: round(v, 1) for k, v in stages.items()},
+        # SLO: first review content must land inside this budget
+        "first_review_ms": round(first_ms, 1) if first_ms is not None else None,
+        "slo_ms": budget,
+        "slo_breach": first_ms is not None and first_ms > budget,
         "tokens_estimated": {"input": in_tokens, "output": out_tokens},
         "cost_usd": round(cost_usd(backend, in_tokens, out_tokens), 6),
     }

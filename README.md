@@ -262,6 +262,13 @@ is order-of-magnitude. Prices default to small-model list prices per backend
 env overrides; `mock` is $0 by definition, `local` charges a flat per-review
 GPU-time guess. The HTTP service logs too when `REVIEW_LOG_PATH` is set.
 
+Each record also carries the time-to-first-review SLO: `first_review_ms`
+(ms from review start until the first model findings are ready — or the
+deterministic checks, when no model pass runs), the budget as `slo_ms`
+(default 30000, override with `REVIEW_SLO_MS`), and `slo_breach: true` when
+the budget is blown. A breach also emits a warning log line, so it's
+visible both in dashboards and while tailing output.
+
 ## Feedback capture: 👍/👎 reactions
 
 Reactions are the cheapest signal that a comment was useful or noise, so

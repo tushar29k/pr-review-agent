@@ -7,6 +7,7 @@ even if the model call fails, times out, or just has an off day.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 
@@ -19,6 +20,8 @@ from .diff_parser import FileDiff, parse_diff
 from .downweight import apply_downweight
 from .ignore import effective_patterns, is_ignored
 from .repo_config import RepoConfig
+
+log = logging.getLogger("pr-review-agent.reviewer")
 
 
 class ReviewBackend:
@@ -159,6 +162,7 @@ class Reviewer:
         skipped = [f.path for f in files if is_ignored(f, patterns)]
         files = [f for f in files if f.path not in skipped]
         stages = {"parse_ms": (time.perf_counter() - t) * 1000}
+        t_start = t
 
         t = time.perf_counter()
         findings = checks.run_all(files, self.config.enabled_checks,
@@ -167,11 +171,19 @@ class Reviewer:
         stages["checks_ms"] = (time.perf_counter() - t) * 1000
 
         t = time.perf_counter()
+        first_review_ms = None  # first model findings ready, ms from review start
         if self.config.check_enabled("llm"):
             for f in files:
                 if not f.is_binary:
                     findings += self.backend.review_file(f)
+                    if first_review_ms is None:
+                        # first model content in hand — that's the first review
+                        first_review_ms = (time.perf_counter() - t_start) * 1000
         stages["model_ms"] = (time.perf_counter() - t) * 1000
+        if first_review_ms is None:
+            # no model pass (disabled, or nothing worth reviewing) — the
+            # deterministic findings are the first review content instead
+            first_review_ms = stages["parse_ms"] + stages["checks_ms"]
 
         t = time.perf_counter()
         findings = self._recalibrate(findings)
@@ -185,6 +197,7 @@ class Reviewer:
         findings.sort(key=lambda d: (
             _SEVERITY_RANK.get(d["severity"], 9), d["file"], d["line"] or 0))
         stages["total_ms"] = sum(stages.values())  # parse+checks+model+dedupe
+        stages["first_review_ms"] = first_review_ms
         return findings, stages, skipped
 
     def backend_name(self) -> str:
@@ -199,6 +212,14 @@ class Reviewer:
         can show them in the review output instead of dropping them."""
         findings, stages, skipped = self.review_timed(diff_text)
         if log_path:
-            append_record(log_path, build_record(
-                diff_text, findings, stages, backend or self.backend_name()))
+            record = build_record(
+                diff_text, findings, stages, backend or self.backend_name())
+            append_record(log_path, record)
+            if record["slo_breach"]:
+                # SLO breach goes to the log line AND the record — the record
+                # is for dashboards, the line is for whoever's tailing output
+                log.warning("review SLO breach: first review took %.0f ms "
+                            "(budget %.0f ms, backend %s)",
+                            record["first_review_ms"], record["slo_ms"],
+                            record["backend"])
         return findings, skipped
