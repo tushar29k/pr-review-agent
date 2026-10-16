@@ -1,0 +1,44 @@
+# CI: evals on every push/PR to main. Fails if any planted issue in the
+# sample PRs goes uncaught — run_eval.py asserts the planted findings under
+# both the mock and anthropic (keyless-degraded-to-mock) reviewer configs
+# and exits 1 on the first miss. Everything runs offline: no keys, no
+# model downloads, so this stays cheap and green on every push.
+name: evals
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile sources
+        run: python -m py_compile $(git ls-files '*.py')
+
+      # planted-issue gate: exits 1 when a planted finding is missed,
+      # which fails the job
+      - name: Run evals (planted-issue gate)
+        run: python evals/run_eval.py
+
+      - name: Unit and webhook tests
+        run: |
+          python test_webhook.py
+          python test_repo_config.py
+          python test_ignore.py
+          python test_feedback.py
+          python test_downweight.py
+          python test_tree_sitter.py
+          python test_complexity.py
+          python test_history.py
