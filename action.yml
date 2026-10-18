@@ -1,0 +1,80 @@
+# pr-review-agent as a GitHub Action (composite — no docker, no server).
+# The Action is the alternative to the GitHub App (see docs/adr/0002):
+# it runs the same deterministic-checks pipeline from cli.py on the PR
+# diff, writes the markdown review to the step summary, and optionally
+# fails the step when a critical finding shows up.
+#
+# Your workflow must checkout the repo first with full history so the
+# base...head diff exists:
+#
+#   - uses: actions/checkout@v4
+#     with:
+#       fetch-depth: 0
+#   - uses: tushar29k/pr-review-agent@main
+#     with:
+#       fail-on-critical: 'true'
+
+name: 'pr-review'
+description: 'Review the PR diff with pr-review-agent deterministic checks'
+inputs:
+  fail-on-critical:
+    description: 'Fail the step when any critical-severity finding is found'
+    required: false
+    default: 'false'
+  checks:
+    description: 'Comma-separated check names to run (default: all)'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install pr-review-agent
+      shell: bash
+      run: pip install -q -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Review PR diff
+      shell: bash
+      run: |
+        set -u
+        # the PR diff comes from the caller's checkout, which needs
+        # fetch-depth: 0 for the base...head range to resolve
+        git -C "$GITHUB_WORKSPACE" diff \
+          "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+          > /tmp/pr-review.diff
+
+        # no model keys needed — deterministic checks + mock backend
+        extra=""
+        if [ -n "${{ inputs.checks }}" ]; then
+          extra="--checks ${{ inputs.checks }}"
+        fi
+
+        # cli.py exits 1 on critical findings; we catch it ourselves so the
+        # summary is always written, then gate on fail-on-critical below
+        set +e
+        python "${{ github.action_path }}/cli.py" --diff /tmp/pr-review.diff \
+          --reviewer mock $extra > /tmp/pr-review.md
+        code=$?
+        set -e
+
+        {
+          echo "## PR review"
+          echo
+          cat /tmp/pr-review.md
+        } >> "$GITHUB_STEP_SUMMARY"
+        cat /tmp/pr-review.md
+
+        if [ "$code" -ne 0 ]; then
+          if [ "${{ inputs.fail-on-critical }}" = "true" ]; then
+            echo "critical finding(s) found — failing as requested" >&2
+            exit 1
+          fi
+          echo "critical finding(s) found, but fail-on-critical is false" >&2
+        fi
+branding:
+  icon: 'check-circle'
+  color: 'green'

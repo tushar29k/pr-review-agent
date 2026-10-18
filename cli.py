@@ -24,7 +24,7 @@ from reviewer.comments import findings_to_markdown
 from reviewer.downweight import load_noisy_weights
 from reviewer.history import hotspots, mine_git_log
 from reviewer.ignore import effective_patterns
-from reviewer.repo_config import discover_config
+from reviewer.repo_config import KNOWN_CHECKS, discover_config
 from reviewer.reviewer import Reviewer, make_backend
 
 
@@ -69,6 +69,10 @@ def main() -> int:
                     default=os.environ.get("FEEDBACK_LOG_PATH"),
                     help="feedback JSONL to learn noise weights from "
                          "(needs --repo; default $FEEDBACK_LOG_PATH)")
+    ap.add_argument("--checks", default=os.environ.get("PR_REVIEW_CHECKS"),
+                    help="comma-separated check names to run (from "
+                         "KNOWN_CHECKS); unset means all. unknown names "
+                         "are ignored with a warning")
     args = ap.parse_args()
 
     try:
@@ -86,6 +90,15 @@ def main() -> int:
         return 2
 
     config = discover_config(args.config)
+    if args.checks:
+        # explicit check list wins over .pr-review.yaml; unknown names warn
+        # and drop, same as the config loader does
+        names = [c.strip() for c in args.checks.split(",") if c.strip()]
+        unknown = [c for c in names if c not in KNOWN_CHECKS]
+        if unknown:
+            print(f"unknown checks ignored: {', '.join(unknown)}",
+                  file=sys.stderr)
+        config.enabled_checks = frozenset(c for c in names if c in KNOWN_CHECKS)
     if args.ignore_pattern:
         # cli patterns layer on top of whatever the config (or the
         # defaults) already ignores
