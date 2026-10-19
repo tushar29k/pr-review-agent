@@ -2,6 +2,49 @@
 
 An automated code reviewer for pull requests: deterministic checks catch the non-negotiables (leaked secrets, debug leftovers), and a swappable reviewer backend adds judgement on top. Runs as a CLI or an HTTP service. Zero API keys needed to try it.
 
+## Release notes — v1.0
+
+The numbers first, since that's what most people ask about:
+
+| backend | eval precision | eval recall | cost / review |
+| --- | --- | --- | --- |
+| mock (offline, no key) | 0.95 | 0.78 | $0.00 |
+| openai (gpt-4o-mini-ish list prices) | scored only with a key set | — | ~$0.0002 |
+| anthropic (haiku-ish list prices) | scored only with a key set | — | ~$0.0004 |
+| local (real weights, flat GPU-time guess) | scored only with weights cached | — | ~$0.0005 |
+
+The evals are five sample PRs with known issues planted in the diffs
+(`evals/sample_prs.json`); the score matches expected findings against what
+the reviewer actually flagged, summed across backends and samples:
+
+```bash
+python evals/run_eval.py                      # per-backend precision/recall table
+python evals/cost_table.py evals/sample_reviews.jsonl   # measured per-review cost
+```
+
+The mock backend runs fully offline — deterministic checks plus mock
+heuristics, no network, no spend — so the 0.95/0.78 and the measured
+$0.00/review (10 real mock runs, 0.8 ms avg latency, `evals/sample_reviews.jsonl`)
+all come from the mock row. The five recall misses all sit in one sample PR
+and are tree-sitter-layer checks (`unused_imports`, `dead_code`, `complexity`);
+the sandbox the numbers were measured in doesn't have `tree_sitter` installed,
+so that layer stayed quiet — an environment gap, not a code failure.
+Deterministic checks on the other four sample PRs recall at 1.00.
+
+The keyed backends are honest estimates, not measurements: `openai` /
+`anthropic` only get scored when real keys are set (`OPENAI_API_KEY` /
+`LLM_API_KEY` — keyless, they sit out or fall back to mock heuristics), and the
+`local` backend only scores with real weights in the HF cache. The cost column
+for them comes from `reviewer/cost.py` at eval-PR scale (token counts are the
+chars/4 estimate, prices are provider list prices, all overridable with
+`REVIEW_PRICE_<BACKEND>_INPUT_PER_1M` env vars) — order of magnitude, not an
+invoice.
+
+Scope, honestly: five hand-made PRs is a benchmark, not a production sample —
+these numbers describe planted-issue detection, not "bugs found on your repo".
+If you want your own number, the ground-truth format is in
+`evals/sample_prs.json`.
+
 ## Live demo
 
 **[https://tushar29k-pr-review-agent.onrender.com](https://tushar29k-pr-review-agent.onrender.com)** — paste a GitHub PR link or a raw diff and get a styled review: PR header with author and diff stats, severity-colored finding cards, and one-click markdown copy.
